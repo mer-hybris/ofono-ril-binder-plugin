@@ -1,0 +1,2 @@
+Implements libgrilio transport which allows to use binder IPC
+instead of RIL sockets.
