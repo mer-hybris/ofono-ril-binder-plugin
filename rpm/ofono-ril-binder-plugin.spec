@@ -4,7 +4,7 @@ Release: 1
 Summary: Ofono RIL binder transport plugin
 Group: Development/Libraries
 License: GPLv2
-URL: https://git.merproject.org/mer-core/ofono-ril-binder-plugin
+URL: https://github.com/mer-hybris/ofono-ril-binder-plugin
 Source: %{name}-%{version}.tar.bz2
 
 Requires: ofono >= 1.21+git28
