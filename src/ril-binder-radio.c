@@ -269,7 +269,6 @@ typedef struct radio_icc_io_result {
 } ALIGNED(8) RadioIccIoResult;
 G_STATIC_ASSERT(sizeof(RadioIccIoResult) == 24);
 
-
 typedef struct radio_call_forward_info {
     gint32 status ALIGNED(4);
     gint32 reason ALIGNED(4);
@@ -280,8 +279,18 @@ typedef struct radio_call_forward_info {
 } ALIGNED(8) RadioCallForwardInfo;
 G_STATIC_ASSERT(sizeof(RadioCallForwardInfo) == 40);
 
+typedef enum radio_cell_info_type {
+    CELL_INFO_GSM = 1,
+    CELL_INFO_CDMA,
+    CELL_INFO_LTE,
+    CELL_INFO_WCDMA,
+    CELL_INFO_TD_SCDMA
+} RadioCellInfoType;
+
+#define CELL_INVALID_VALUE (INT_MAX)
+
 typedef struct radio_cell_identity {
-    guint32 cellInfoType ALIGNED(4);
+    gint32 cellInfoType ALIGNED(4);
     RadioVector gsm ALIGNED(8);     /* vec<RadioCellIdentityGsm> */
     RadioVector wcdma ALIGNED(8);   /* vec<RadioCellIdentityWcdma> */
     RadioVector cdma ALIGNED(8);    /* vec<RadioCellIdentityCdma> */
@@ -289,6 +298,19 @@ typedef struct radio_cell_identity {
     RadioVector tdscdma ALIGNED(8); /* vec<RadioCellIdentityTdscdma> */
 } ALIGNED(8) RadioCellIdentity;
 G_STATIC_ASSERT(sizeof(RadioCellIdentity) == 88);
+
+typedef struct radio_cell_info {
+    gint32 cellInfoType ALIGNED(4);
+    guint8 registered ALIGNED(1);
+    gint32 timeStampType ALIGNED(4);
+    guint64 timeStamp ALIGNED(8);
+    RadioVector gsm ALIGNED(8);     /* vec<RadioCellInfoGsm>  */
+    RadioVector cdma ALIGNED(8);    /* vec<RadioCellInfoCdma>  */
+    RadioVector lte ALIGNED(8);     /* vec<RadioCellInfoLte> */
+    RadioVector wcdma ALIGNED(8);   /* vec<RadioCellInfoWcdma>  */
+    RadioVector tdscdma ALIGNED(8); /* vec<RadioCellInfoTdscdma>  */
+} ALIGNED(8) RadioCellInfo;
+G_STATIC_ASSERT(sizeof(RadioCellInfo) == 104);
 
 typedef struct radio_cell_identity_gsm {
     RadioString mcc ALIGNED(8);
@@ -350,7 +372,7 @@ typedef struct radio_voice_reg_state_result {
 } ALIGNED(8) RadioVoiceRegStateResult;
 G_STATIC_ASSERT(sizeof(RadioVoiceRegStateResult) == 120);
 
-typedef struct radio_DataRegStateResult {
+typedef struct radio_data_reg_state_result {
     gint32 regState ALIGNED(4);
     gint32 rat ALIGNED(4);
     gint32 reasonDataDenied ALIGNED(4);
@@ -359,55 +381,86 @@ typedef struct radio_DataRegStateResult {
 } ALIGNED(8) RadioDataRegStateResult;
 G_STATIC_ASSERT(sizeof(RadioDataRegStateResult) == 104);
 
-typedef struct radio_gsm_signal_strength {
+typedef struct radio_signal_strength_gsm {
     guint32 signalStrength ALIGNED(4);
     guint32 bitErrorRate ALIGNED(4);
     gint32 timingAdvance ALIGNED(4);
-} ALIGNED(4) RadioGsmSignalStrength;
-G_STATIC_ASSERT(sizeof(RadioGsmSignalStrength) == 12);
+} ALIGNED(4) RadioSignalStrengthGsm;
+G_STATIC_ASSERT(sizeof(RadioSignalStrengthGsm) == 12);
 
-typedef struct radio_wcdma_signal_strength {
+typedef struct radio_signal_strength_wcdma {
     gint32 signalStrength ALIGNED(4);
     gint32 bitErrorRate ALIGNED(4);
-} ALIGNED(4) RadioWcdmaSignalStrength;
-G_STATIC_ASSERT(sizeof(RadioWcdmaSignalStrength) == 8);
+} ALIGNED(4) RadioSignalStrengthWcdma;
+G_STATIC_ASSERT(sizeof(RadioSignalStrengthWcdma) == 8);
 
-typedef struct radio_cdma_signal_strength {
+typedef struct radio_signal_strength_cdma {
     guint32 dbm ALIGNED(4);
     guint32 ecio ALIGNED(4);
-} ALIGNED(4) RadioCdmaSignalStrength;
-G_STATIC_ASSERT(sizeof(RadioCdmaSignalStrength) == 8);
+} ALIGNED(4) RadioSignalStrengthCdma;
+G_STATIC_ASSERT(sizeof(RadioSignalStrengthCdma) == 8);
 
-typedef struct radio_evdo_signal_strength {
+typedef struct radio_signal_strength_evdo {
     guint32 dbm ALIGNED(4);
     guint32 ecio ALIGNED(4);
     guint32 signalNoiseRatio ALIGNED(4);
-} ALIGNED(4) RadioEvdoSignalStrength;
-G_STATIC_ASSERT(sizeof(RadioEvdoSignalStrength) == 12);
+} ALIGNED(4) RadioSignalStrengthEvdo;
+G_STATIC_ASSERT(sizeof(RadioSignalStrengthEvdo) == 12);
 
-typedef struct radio_lte_signal_strength {
+typedef struct radio_signal_strength_lte {
     guint32 signalStrength ALIGNED(4);
     guint32 rsrp ALIGNED(4);
     guint32 rsrq ALIGNED(4);
     gint32 rssnr ALIGNED(4);
     guint32 cqi ALIGNED(4);
     guint32 timingAdvance ALIGNED(4);
-} ALIGNED(4) RadioLteSignalStrength;
-G_STATIC_ASSERT(sizeof(RadioLteSignalStrength) == 24);
+} ALIGNED(4) RadioSignalStrengthLte;
+G_STATIC_ASSERT(sizeof(RadioSignalStrengthLte) == 24);
 
-typedef struct radio_tdscdma_signal_strength {
+typedef struct radio_signal_strength_tdscdma {
     guint32 rscp ALIGNED(4);
-} ALIGNED(4) RadioTdScdmaSignalStrength;
-G_STATIC_ASSERT(sizeof(RadioTdScdmaSignalStrength) == 4);
+} ALIGNED(4) RadioSignalStrengthTdScdma;
+G_STATIC_ASSERT(sizeof(RadioSignalStrengthTdScdma) == 4);
 
 typedef struct radio_signal_strength {
-    RadioGsmSignalStrength gw ALIGNED(4);
-    RadioCdmaSignalStrength cdma ALIGNED(4);
-    RadioEvdoSignalStrength evdo ALIGNED(4);
-    RadioLteSignalStrength lte ALIGNED(4);
-    RadioTdScdmaSignalStrength tdScdma ALIGNED(4);
+    RadioSignalStrengthGsm gw ALIGNED(4);
+    RadioSignalStrengthCdma cdma ALIGNED(4);
+    RadioSignalStrengthEvdo evdo ALIGNED(4);
+    RadioSignalStrengthLte lte ALIGNED(4);
+    RadioSignalStrengthTdScdma tdScdma ALIGNED(4);
 } ALIGNED(4) RadioSignalStrength;
 G_STATIC_ASSERT(sizeof(RadioSignalStrength) == 60);
+
+typedef struct radio_cell_info_gsm {
+    RadioCellIdentityGsm cellIdentityGsm ALIGNED(8);
+    RadioSignalStrengthGsm signalStrengthGsm ALIGNED(4);
+} ALIGNED(8) RadioCellInfoGsm;
+G_STATIC_ASSERT(sizeof(RadioCellInfoGsm) == 64);
+
+typedef struct radio_cell_info_wcdma {
+    RadioCellIdentityWcdma cellIdentityWcdma ALIGNED(8);
+    RadioSignalStrengthWcdma signalStrengthWcdma ALIGNED(4);
+} ALIGNED(8) RadioCellInfoWcdma;
+G_STATIC_ASSERT(sizeof(RadioCellInfoWcdma) == 56);
+
+typedef struct radio_cell_info_cdma {
+    RadioCellIdentityCdma cellIdentityCdma ALIGNED(4);
+    RadioSignalStrengthCdma signalStrengthCdma ALIGNED(4);
+    RadioSignalStrengthEvdo signalStrengthEvdo ALIGNED(4);
+} ALIGNED(4) RadioCellInfoCdma;
+G_STATIC_ASSERT(sizeof(RadioCellInfoCdma) == 40);
+
+typedef struct radio_cell_info_lte {
+    RadioCellIdentityLte cellIdentityLte ALIGNED(8);
+    RadioSignalStrengthLte signalStrengthLte ALIGNED(4);
+} ALIGNED(8) RadioCellInfoLte;
+G_STATIC_ASSERT(sizeof(RadioCellInfoLte) == 72);
+
+typedef struct radio_cell_info_tdscdma {
+    RadioCellIdentityTdscdma cellIdentityTdscdma ALIGNED(8);
+    RadioSignalStrengthTdScdma signalStrengthTdscdma ALIGNED(4);
+} ALIGNED(8) RadioCellInfoTdscdma;
+G_STATIC_ASSERT(sizeof(RadioCellInfoTdscdma) == 56);
 
 typedef struct radio_gsm_broadcast_sms_config {
     gint32 fromServiceId ALIGNED(4);
@@ -1293,8 +1346,27 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
  * Decoders (binder -> plugin)
  *==========================================================================*/
 
+#define ril_binder_radio_decode_struct(type,in) \
+	((const type*)ril_binder_radio_decode_struct1(in, sizeof(type)))
+
 #define ril_binder_radio_decode_array(type,in,count) \
-	((type*)ril_binder_radio_decode_array1(in, sizeof(type),count))
+	((const type*)ril_binder_radio_decode_array1(in, sizeof(type), count))
+
+static
+const void*
+ril_binder_radio_decode_struct1(
+    GBinderReader* in,
+    guint size)
+{
+    const void* result = NULL;
+    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+
+    if (buf && buf->size == size) {
+        result = buf->data;
+    }
+    gbinder_buffer_free(buf);
+    return result;
+}
 
 static
 const void*
@@ -1304,13 +1376,11 @@ ril_binder_radio_decode_array1(
     guint32* count)
 {
     const void* result = NULL;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioVector* array = ril_binder_radio_decode_struct(RadioVector, in);
 
-    if (buf && buf->size == sizeof(RadioVector)) {
-        const RadioVector* array = buf->data;
-
-        /* The contents comes as another buffer */
+    if (array) {
         if (array->data.ptr) {
+            /* The contents comes as another buffer */
             GBinderBuffer* data = gbinder_reader_read_buffer(in);
 
             if (data && data->data == array->data.ptr &&
@@ -1330,7 +1400,6 @@ ril_binder_radio_decode_array1(
             result = &dummy;
         }
     }
-    gbinder_buffer_free(buf);
     return result;
 }
 
@@ -1524,10 +1593,10 @@ ril_binder_radio_decode_icc_card_status(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioCardStatus* sim = ril_binder_radio_decode_struct
+        (RadioCardStatus, in);
 
-    if (buf && buf->size == sizeof(RadioCardStatus)) {
-        const RadioCardStatus* sim = buf->data;
+    if (sim) {
         const RadioAppStatus* apps = sim->apps.data.ptr;
         guint i;
 
@@ -1553,7 +1622,6 @@ ril_binder_radio_decode_icc_card_status(
 
         ok = TRUE;
     }
-    gbinder_buffer_free(buf);
     return ok;
 }
 
@@ -1566,22 +1634,19 @@ ril_binder_radio_decode_voice_reg_state(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioVoiceRegStateResult* reg = ril_binder_radio_decode_struct
+        (RadioVoiceRegStateResult, in);
 
-    if (buf && buf->size == sizeof(RadioVoiceRegStateResult)) {
-        const RadioVoiceRegStateResult* reg = buf->data;
-
+    if (reg) {
         grilio_encode_int32(out, 5);
         grilio_encode_format(out, "%d", reg->regState);
         grilio_encode_utf8(out, ""); /* slac */
         grilio_encode_utf8(out, ""); /* sci */
         grilio_encode_format(out, "%d", reg->rat);
         grilio_encode_format(out, "%d", reg->reasonForDenial);
-        ok = TRUE;
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -1593,12 +1658,10 @@ ril_binder_radio_decode_data_reg_state(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioDataRegStateResult* reg = ril_binder_radio_decode_struct
+        (RadioDataRegStateResult, in);
 
-    if (buf && buf->size == sizeof(RadioDataRegStateResult)) {
-        const RadioDataRegStateResult* reg = buf->data;
-
+    if (reg) {
         grilio_encode_int32(out, 6);
         grilio_encode_format(out, "%d", reg->regState);
         grilio_encode_utf8(out, ""); /* slac */
@@ -1606,10 +1669,9 @@ ril_binder_radio_decode_data_reg_state(
         grilio_encode_format(out, "%d", reg->rat);
         grilio_encode_format(out, "%d", reg->reasonDataDenied);
         grilio_encode_format(out, "%d", reg->maxDataCalls);
-        ok = TRUE;
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -1621,19 +1683,16 @@ ril_binder_radio_decode_sms_send_result(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioSendSmsResult* result = ril_binder_radio_decode_struct
+        (RadioSendSmsResult, in);
 
-    if (buf && buf->size == sizeof(RadioSendSmsResult)) {
-        const RadioSendSmsResult* result = buf->data;
-
+    if (result) {
         grilio_encode_int32(out, result->messageRef);
         grilio_encode_utf8(out, result->ackPDU.data.str);
         grilio_encode_int32(out, result->errorCode);
-        ok = TRUE;
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -1645,19 +1704,16 @@ ril_binder_radio_decode_icc_result(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioIccIoResult* result = ril_binder_radio_decode_struct
+        (RadioIccIoResult, in);
 
-    if (buf && buf->size == sizeof(RadioIccIoResult)) {
-        const RadioIccIoResult* result = buf->data;
-
+    if (result) {
         grilio_encode_int32(out, result->sw1);
         grilio_encode_int32(out, result->sw2);
         grilio_encode_utf8(out, result->response.data.str);
-        ok = TRUE;
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -1672,8 +1728,8 @@ ril_binder_radio_decode_call_forward_info_array(
 {
     gboolean ok = FALSE;
     guint32 count = 0;
-    const RadioCallForwardInfo* infos =
-        ril_binder_radio_decode_array(RadioCallForwardInfo, in, &count);
+    const RadioCallForwardInfo* infos = ril_binder_radio_decode_array
+        (RadioCallForwardInfo, in, &count);
 
     if (infos) {
         guint i;
@@ -1705,8 +1761,8 @@ ril_binder_radio_decode_call_list(
 {
     gboolean ok = FALSE;
     guint32 count = 0;
-    const RadioCall* calls =
-        ril_binder_radio_decode_array(RadioCall, in, &count);
+    const RadioCall* calls = ril_binder_radio_decode_array
+        (RadioCall, in, &count);
 
     if (calls) {
         guint i;
@@ -1740,18 +1796,15 @@ ril_binder_radio_decode_last_call_fail_cause(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioLastCallFailCauseInfo* info = ril_binder_radio_decode_struct
+        (RadioLastCallFailCauseInfo, in);
 
-    if (buf && buf->size == sizeof(RadioLastCallFailCauseInfo)) {
-        const RadioLastCallFailCauseInfo* info = buf->data;
-
+    if (info) {
         grilio_encode_int32(out, info->causeCode);
         grilio_encode_utf8(out, info->vendorCause.data.str);
-        ok = TRUE;
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -1794,8 +1847,8 @@ ril_binder_radio_decode_operator_info_list(
 {
     gboolean ok = FALSE;
     guint32 count = 0;
-    const RadioOperatorInfo* ops =
-        ril_binder_radio_decode_array(RadioOperatorInfo, in, &count);
+    const RadioOperatorInfo* ops = ril_binder_radio_decode_array
+        (RadioOperatorInfo, in, &count);
 
     if (ops) {
         guint i;
@@ -1848,8 +1901,8 @@ ril_binder_radio_decode_data_call_list(
 {
     gboolean ok = FALSE;
     guint32 count = 0;
-    const RadioDataCall* calls =
-        ril_binder_radio_decode_array(RadioDataCall, in, &count);
+    const RadioDataCall* calls = ril_binder_radio_decode_array
+        (RadioDataCall, in, &count);
 
     if (calls) {
         guint i;
@@ -1873,17 +1926,16 @@ ril_binder_radio_decode_setup_data_call_result(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioDataCall* call = ril_binder_radio_decode_struct
+        (RadioDataCall, in);
 
-    if (buf && buf->size == sizeof(RadioDataCall)) {
+    if (call) {
         grilio_encode_int32(out, DATA_CALL_VERSION);
         grilio_encode_int32(out, 1);
-        ril_binder_radio_decode_data_call(out, buf->data);
-        ok = TRUE;
+        ril_binder_radio_decode_data_call(out, call);
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -1916,12 +1968,12 @@ ril_binder_radio_decode_gsm_broadcast_sms_config(
 {
     gboolean ok = FALSE;
     guint32 count = 0;
-    const RadioGsmBroadcastSmsConfig* configs =
-        ril_binder_radio_decode_array(RadioGsmBroadcastSmsConfig, in, &count);
+    const RadioGsmBroadcastSmsConfig* configs = ril_binder_radio_decode_array
+        (RadioGsmBroadcastSmsConfig, in, &count);
 
     if (configs) {
         guint i;
-		
+
         grilio_encode_int32(out, count);
         for (i = 0; i < count; i++) {
             const RadioGsmBroadcastSmsConfig* config = configs + i;
@@ -2004,12 +2056,10 @@ ril_binder_radio_decode_signal_strength(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioSignalStrength* strength = ril_binder_radio_decode_struct
+        (RadioSignalStrength, in);
 
-    if (buf && buf->size == sizeof(RadioSignalStrength)) {
-        const RadioSignalStrength* strength = buf->data;
-
+    if (strength) {
         /* RIL_SignalStrength_v6 */
         /* GW_SignalStrength */
         grilio_encode_int32(out, strength->gw.signalStrength);
@@ -2029,10 +2079,9 @@ ril_binder_radio_decode_signal_strength(
         grilio_encode_int32(out, strength->lte.rsrp);
         /* The rest is ignored */
 
-        ok = TRUE;
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -2044,21 +2093,18 @@ ril_binder_radio_decode_supp_svc_notification(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioSuppSvcNotification* notify = ril_binder_radio_decode_struct
+        (RadioSuppSvcNotification, in);
 
-    if (buf && buf->size == sizeof(RadioSuppSvcNotification)) {
-        const RadioSuppSvcNotification* notify = buf->data;
-
+    if (notify) {
         grilio_encode_int32(out, notify->isMT);
         grilio_encode_int32(out, notify->code);
         grilio_encode_int32(out, notify->index);
         grilio_encode_int32(out, notify->type);
         grilio_encode_utf8(out, notify->number.data.str);
-        ok = TRUE;
+        return TRUE;
     }
-    gbinder_buffer_free(buf);
-    return ok;
+    return TRUE;
 }
 
 /**
@@ -2070,18 +2116,257 @@ ril_binder_radio_decode_sim_refresh(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
+    const RadioSimRefresh* refresh = ril_binder_radio_decode_struct
+        (RadioSimRefresh, in);
 
-    if (buf && buf->size == sizeof(RadioSimRefresh)) {
-        const RadioSimRefresh* refresh = buf->data;
-
+    if (refresh) {
         grilio_encode_int32(out, refresh->type);
         grilio_encode_int32(out, refresh->efId);
         grilio_encode_utf8(out, refresh->aid.data.str);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_header(
+    GByteArray* out,
+    const RadioCellInfo* cell)
+{
+    grilio_encode_int32(out, cell->cellInfoType);
+    grilio_encode_int32(out, cell->registered);
+    grilio_encode_int32(out, cell->timeStampType);
+    /* There should be grilio_encode_int64() call below (there's no
+     * such function in libgrilio) but the timestamp value is ignored
+     * anyway, so who cares... */
+    grilio_encode_bytes(out, &cell->timeStamp, sizeof(cell->timeStamp));
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_gsm(
+    GByteArray* out,
+    const RadioCellInfo* cell)
+{
+    const RadioCellInfoGsm* info =  cell->gsm.data.ptr;
+    guint i, count = cell->gsm.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityGsm* id = &info[i].cellIdentityGsm;
+        const RadioSignalStrengthGsm* ss = &info[i].signalStrengthGsm;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->lac);
+        grilio_encode_int32(out, id->cid);
+        grilio_encode_int32(out, id->arfcn);
+        grilio_encode_int32(out, id->bsic);
+        grilio_encode_int32(out, ss->signalStrength);
+        grilio_encode_int32(out, ss->bitErrorRate);
+        grilio_encode_int32(out, ss->timingAdvance);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_cdma(
+    GByteArray* out,
+    const RadioCellInfo* cell)
+{
+    const RadioCellInfoCdma* info = cell->cdma.data.ptr;
+    guint i, count = cell->cdma.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityCdma* id = &info[i].cellIdentityCdma;
+        const RadioSignalStrengthCdma* ss = &info[i].signalStrengthCdma;
+        const RadioSignalStrengthEvdo* evdo = &info[i].signalStrengthEvdo;
+
+        ril_binder_radio_decode_cell_info_header(out, cell);
+        grilio_encode_int32(out, id->networkId);
+        grilio_encode_int32(out, id->systemId);
+        grilio_encode_int32(out, id->baseStationId);
+        grilio_encode_int32(out, id->longitude);
+        grilio_encode_int32(out, id->latitude);
+        grilio_encode_int32(out, ss->dbm);
+        grilio_encode_int32(out, ss->ecio);
+        grilio_encode_int32(out, evdo->dbm);
+        grilio_encode_int32(out, evdo->ecio);
+        grilio_encode_int32(out, evdo->signalNoiseRatio);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_lte(
+    GByteArray* out,
+    const RadioCellInfo* cell)
+{
+    const RadioCellInfoLte* info = cell->lte.data.ptr;
+    guint i, count = cell->lte.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityLte* id = &info[i].cellIdentityLte;
+        const RadioSignalStrengthLte* ss = &info[i].signalStrengthLte;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->ci);
+        grilio_encode_int32(out, id->pci);
+        grilio_encode_int32(out, id->tac);
+        grilio_encode_int32(out, id->earfcn);
+        grilio_encode_int32(out, ss->signalStrength);
+        grilio_encode_int32(out, ss->rsrp);
+        grilio_encode_int32(out, ss->rsrq);
+        grilio_encode_int32(out, ss->rssnr);
+        grilio_encode_int32(out, ss->cqi);
+        grilio_encode_int32(out, ss->timingAdvance);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_wcdma(
+    GByteArray* out,
+    const RadioCellInfo* cell)
+{
+    const RadioCellInfoWcdma* info = cell->wcdma.data.ptr;
+    guint i, count = cell->wcdma.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityWcdma* id = &info[i].cellIdentityWcdma;
+        const RadioSignalStrengthWcdma* ss = &info[i].signalStrengthWcdma;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->lac);
+        grilio_encode_int32(out, id->cid);
+        grilio_encode_int32(out, id->psc);
+        grilio_encode_int32(out, id->uarfcn);
+        grilio_encode_int32(out, ss->signalStrength);
+        grilio_encode_int32(out, ss->bitErrorRate);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_tdscdma(
+    GByteArray* out,
+    const RadioCellInfo* cell)
+{
+    const RadioCellInfoTdscdma* info = cell->tdscdma.data.ptr;
+    guint i, count = cell->tdscdma.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityTdscdma* id = &info[i].cellIdentityTdscdma;
+        const RadioSignalStrengthTdScdma* ss = &info[i].signalStrengthTdscdma;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->lac);
+        grilio_encode_int32(out, id->cid);
+        grilio_encode_int32(out, id->cpid);
+        grilio_encode_int32(out, ss->rscp);
+    }
+}
+
+/**
+ * @param cellInfo List of current cell information known to radio
+ */
+static
+gboolean
+ril_binder_radio_decode_cell_info_list(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean ok = FALSE;
+    guint32 count = 0;
+    const RadioCellInfo* cells = ril_binder_radio_decode_array
+        (RadioCellInfo, in, &count);
+
+    if (cells) {
+        guint i, n = 0;
+
+        /* Count supported types */
+        for (i = 0; i < count; i++) {
+            const RadioCellInfo* cell = cells + i;
+
+            switch (cells[i].cellInfoType) {
+            case CELL_INFO_GSM:
+                n += cell->gsm.count;
+                break;
+            case CELL_INFO_CDMA:
+                n += cell->cdma.count;
+                break;
+            case CELL_INFO_LTE:
+                n += cell->lte.count;
+                break;
+            case CELL_INFO_WCDMA:
+                n += cell->wcdma.count;
+                break;
+            case CELL_INFO_TD_SCDMA:
+                n += cell->tdscdma.count;
+                break;
+            }
+        }
+
+        grilio_encode_int32(out, n);
+
+        for (i = 0; i < count; i++) {
+            const RadioCellInfo* cell = cells + i;
+
+            switch (cell->cellInfoType) {
+            case CELL_INFO_GSM:
+                ril_binder_radio_decode_cell_info_gsm(out, cell);
+                break;
+            case CELL_INFO_CDMA:
+                ril_binder_radio_decode_cell_info_cdma(out, cell);
+                break;
+            case CELL_INFO_LTE:
+                ril_binder_radio_decode_cell_info_lte(out, cell);
+                break;
+            case CELL_INFO_WCDMA:
+                ril_binder_radio_decode_cell_info_wcdma(out, cell);
+                break;
+            case CELL_INFO_TD_SCDMA:
+                ril_binder_radio_decode_cell_info_tdscdma(out, cell);
+                break;
+            }
+        }
         ok = TRUE;
     }
-    gbinder_buffer_free(buf);
     return ok;
 }
 
@@ -2525,6 +2810,20 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         ril_binder_radio_decode_pref_network_type,
         "getPreferredNetworkType"
     },{
+        RIL_REQUEST_SCREEN_STATE, /* deprecated on 2017-01-10 */
+        68, /* setLocationUpdates */
+        67, /* setLocationUpdatesResponse */
+        ril_binder_radio_encode_bool,
+        NULL,
+        "setLocationUpdates"
+    },{
+        RIL_REQUEST_SET_LOCATION_UPDATES,
+        68, /* setLocationUpdates */
+        67, /* setLocationUpdatesResponse */
+        ril_binder_radio_encode_bool,
+        NULL,
+        "setLocationUpdates"
+    },{
         RIL_REQUEST_GSM_GET_BROADCAST_SMS_CONFIG,
         80, /* getGsmBroadcastConfig */
         79, /* getGsmBroadcastConfigResponse */
@@ -2566,6 +2865,20 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         ril_binder_radio_encode_serial,
         NULL,
         "reportStkServiceIsRunning"
+    },{
+        RIL_REQUEST_GET_CELL_INFO_LIST,
+        100, /* getCellInfoList */
+        99, /* getCellInfoListResponse */
+        ril_binder_radio_encode_serial,
+        ril_binder_radio_decode_cell_info_list,
+        "getCellInfoList"
+    },{
+        RIL_REQUEST_SET_UNSOL_CELL_INFO_LIST_RATE,
+        101, /* setCellInfoListRate */
+        100, /* setCellInfoListRateResponse */
+        ril_binder_radio_encode_ints,
+        NULL,
+        "setCellInfoListRate"
     },{
         RIL_REQUEST_ALLOW_DATA,
         114, /* setDataAllowed */
@@ -2678,6 +2991,11 @@ static const RilBinderRadioEvent ril_binder_radio_events[] = {
         34, /* voiceRadioTechChanged */
         ril_binder_radio_decode_int32,
         "voiceRadioTechChanged"
+    },{
+        RIL_UNSOL_CELL_INFO_LIST,
+        35, /* cellInfoList */
+        ril_binder_radio_decode_cell_info_list,
+        "cellInfoList"
     },{
         RIL_UNSOL_UICC_SUBSCRIPTION_STATUS_CHANGED,
         37, /* subscriptionStatusChanged */
