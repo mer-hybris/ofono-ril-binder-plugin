@@ -471,6 +471,14 @@ typedef struct radio_gsm_broadcast_sms_config {
 } ALIGNED(4) RadioGsmBroadcastSmsConfig;
 G_STATIC_ASSERT(sizeof(RadioGsmBroadcastSmsConfig) == 20);
 
+typedef struct radio_select_uicc_sub {
+    gint32 slot ALIGNED(4);
+    gint32 appIndex ALIGNED(4);
+    gint32 subType ALIGNED(4);
+    gint32 actStatus ALIGNED(4);
+} ALIGNED(4) RadioSelectUiccSub;
+G_STATIC_ASSERT(sizeof(RadioSelectUiccSub) == 16);
+
 typedef struct radio_supp_svc_notification {
     guint8 isMT ALIGNED(1);
     gint32 code ALIGNED(4);
@@ -1285,16 +1293,14 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
     GRilIoRequest* in,
     GBinderLocalRequest* out)
 {
-    gboolean ok = FALSE;
     GRilIoParser parser;
     gint32 count;
 
     ril_binder_radio_init_parser(&parser, in);
     if (grilio_parser_get_int32(&parser, &count)) {
-        GBinderWriter writer;
-        GBinderParent parent;
         RadioVector* vec = g_new0(RadioVector, 1);
         RadioGsmBroadcastSmsConfig* configs = NULL;
+        gboolean ok = TRUE;
         guint i;
 
         vec->count = count;
@@ -1306,7 +1312,6 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
             vec->data.ptr = configs;
         }
 
-        ok = TRUE;
         for (i = 0; i < count && ok; i++) {
             RadioGsmBroadcastSmsConfig* config = configs + i;
             gint32 selected;
@@ -1323,6 +1328,9 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
         }
 
         if (ok && grilio_parser_at_end(&parser)) {
+            GBinderWriter writer;
+            GBinderParent parent;
+
             /* The entire input has been successfully parsed */
             gbinder_local_request_init_writer(out, &writer);
             gbinder_writer_append_int32(&writer, grilio_request_serial(in));
@@ -1336,11 +1344,41 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
                 gbinder_writer_append_buffer_object_with_parent(&writer,
                     configs, sizeof(configs[0]) * count, &parent);
             }
+            return TRUE;
         }
     }
-    return ok;
+    return FALSE;
 }
 
+/**
+ * @param serial Serial number of request.
+ * @param uiccSub SelectUiccSub as defined in types.hal
+ */
+static
+gboolean
+ril_binder_radio_encode_uicc_sub(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    RadioSelectUiccSub* sub = g_new0(RadioSelectUiccSub, 1);
+
+    gbinder_local_request_cleanup(out, g_free, sub);
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &sub->slot) &&
+        grilio_parser_get_int32(&parser, &sub->appIndex) &&
+        grilio_parser_get_int32(&parser, &sub->subType) &&
+        grilio_parser_get_int32(&parser, &sub->actStatus) &&
+        grilio_parser_at_end(&parser)) {
+        GBinderWriter writer;
+
+        gbinder_local_request_init_writer(out, &writer);
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+        gbinder_writer_append_buffer_object(&writer, sub, sizeof(*sub));
+        return TRUE;
+    }
+    return FALSE;
+}
 
 /*==========================================================================*
  * Decoders (binder -> plugin)
@@ -2879,6 +2917,13 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         ril_binder_radio_encode_ints,
         NULL,
         "setCellInfoListRate"
+    },{
+        RIL_REQUEST_SET_UICC_SUBSCRIPTION,
+        113, /* setUiccSubscription */
+        112, /* setUiccSubscriptionResponse */
+        ril_binder_radio_encode_uicc_sub,
+        NULL,
+        "setUiccSubscription"
     },{
         RIL_REQUEST_ALLOW_DATA,
         114, /* setDataAllowed */
