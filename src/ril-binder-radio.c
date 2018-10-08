@@ -13,9 +13,9 @@
  *   2. Redistributions in binary form must reproduce the above copyright
  *      notice, this list of conditions and the following disclaimer in the
  *      documentation and/or other materials provided with the distribution.
- *   3. Neither the name of Jolla Ltd nor the names of its contributors may
- *      be used to endorse or promote products derived from this software
- *      without specific prior written permission.
+ *   3. Neither the names of the copyright holders nor the names of its
+ *      contributors may be used to endorse or promote products derived from
+ *      this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -1384,63 +1384,6 @@ ril_binder_radio_encode_uicc_sub(
  * Decoders (binder -> plugin)
  *==========================================================================*/
 
-#define ril_binder_radio_decode_struct(type,in) \
-	((const type*)ril_binder_radio_decode_struct1(in, sizeof(type)))
-
-#define ril_binder_radio_decode_array(type,in,count) \
-	((const type*)ril_binder_radio_decode_array1(in, sizeof(type), count))
-
-static
-const void*
-ril_binder_radio_decode_struct1(
-    GBinderReader* in,
-    guint size)
-{
-    const void* result = NULL;
-    GBinderBuffer* buf = gbinder_reader_read_buffer(in);
-
-    if (buf && buf->size == size) {
-        result = buf->data;
-    }
-    gbinder_buffer_free(buf);
-    return result;
-}
-
-static
-const void*
-ril_binder_radio_decode_array1(
-    GBinderReader* in,
-    guint elem_size,
-    guint32* count)
-{
-    const void* result = NULL;
-    const RadioVector* array = ril_binder_radio_decode_struct(RadioVector, in);
-
-    if (array) {
-        if (array->data.ptr) {
-            /* The contents comes as another buffer */
-            GBinderBuffer* data = gbinder_reader_read_buffer(in);
-
-            if (data && data->data == array->data.ptr &&
-                data->size == array->count * elem_size) {
-                if (count) {
-                    *count = array->count;
-                }
-                result = data->data;
-            }
-            gbinder_buffer_free(data);
-        } else {
-            static const gsize dummy = 0;
-
-            if (count) {
-                *count = 0;
-            }
-            result = &dummy;
-        }
-    }
-    return result;
-}
-
 static
 gboolean
 ril_binder_radio_decode_int32(
@@ -1561,14 +1504,14 @@ ril_binder_radio_decode_int_array(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    guint32 count = 0;
-    const gint32* values = ril_binder_radio_decode_array(gint32, in, &count);
+    gsize n = 0;
+    const gint32* values = gbinder_reader_read_hidl_type_vec(in, gint32, &n);
 
     if (values) {
         guint i;
 
-        grilio_encode_int32(out, count);
-        for (i = 0; i < count; i++) {
+        grilio_encode_int32(out, n);
+        for (i = 0; i < n; i++) {
             grilio_encode_int32(out, values[i]);
         }
         ok = TRUE;
@@ -1583,7 +1526,7 @@ ril_binder_radio_decode_byte_array(
     GByteArray* out)
 {
     guint32 size = 0;
-    const guint8* ptr = ril_binder_radio_decode_array(guint8, in, &size);
+    const guint8* ptr = gbinder_reader_read_hidl_byte_vec(in, &size);
 
     if (ptr) {
         g_byte_array_append(out, ptr, size);
@@ -1599,7 +1542,7 @@ ril_binder_radio_decode_byte_array_to_hex(
     GByteArray* out)
 {
     guint32 size = 0;
-    const guint8* bytes = ril_binder_radio_decode_array(guint8, in, &size);
+    const guint8* bytes = gbinder_reader_read_hidl_byte_vec(in, &size);
 
     if (bytes) {
         static const char hex[] = "0123456789ABCDEF";
@@ -1631,8 +1574,8 @@ ril_binder_radio_decode_icc_card_status(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    const RadioCardStatus* sim = ril_binder_radio_decode_struct
-        (RadioCardStatus, in);
+    const RadioCardStatus* sim = gbinder_reader_read_hidl_struct
+        (in, RadioCardStatus);
 
     if (sim) {
         const RadioAppStatus* apps = sim->apps.data.ptr;
@@ -1672,8 +1615,8 @@ ril_binder_radio_decode_voice_reg_state(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioVoiceRegStateResult* reg = ril_binder_radio_decode_struct
-        (RadioVoiceRegStateResult, in);
+    const RadioVoiceRegStateResult* reg = gbinder_reader_read_hidl_struct
+        (in, RadioVoiceRegStateResult);
 
     if (reg) {
         grilio_encode_int32(out, 5);
@@ -1696,8 +1639,8 @@ ril_binder_radio_decode_data_reg_state(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioDataRegStateResult* reg = ril_binder_radio_decode_struct
-        (RadioDataRegStateResult, in);
+    const RadioDataRegStateResult* reg = gbinder_reader_read_hidl_struct
+        (in, RadioDataRegStateResult);
 
     if (reg) {
         grilio_encode_int32(out, 6);
@@ -1721,8 +1664,8 @@ ril_binder_radio_decode_sms_send_result(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioSendSmsResult* result = ril_binder_radio_decode_struct
-        (RadioSendSmsResult, in);
+    const RadioSendSmsResult* result = gbinder_reader_read_hidl_struct
+        (in, RadioSendSmsResult);
 
     if (result) {
         grilio_encode_int32(out, result->messageRef);
@@ -1742,8 +1685,8 @@ ril_binder_radio_decode_icc_result(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioIccIoResult* result = ril_binder_radio_decode_struct
-        (RadioIccIoResult, in);
+    const RadioIccIoResult* result = gbinder_reader_read_hidl_struct
+        (in, RadioIccIoResult);
 
     if (result) {
         grilio_encode_int32(out, result->sw1);
@@ -1765,9 +1708,9 @@ ril_binder_radio_decode_call_forward_info_array(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    guint32 count = 0;
-    const RadioCallForwardInfo* infos = ril_binder_radio_decode_array
-        (RadioCallForwardInfo, in, &count);
+    gsize count = 0;
+    const RadioCallForwardInfo* infos = gbinder_reader_read_hidl_type_vec
+        (in, RadioCallForwardInfo, &count);
 
     if (infos) {
         guint i;
@@ -1798,9 +1741,9 @@ ril_binder_radio_decode_call_list(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    guint32 count = 0;
-    const RadioCall* calls = ril_binder_radio_decode_array
-        (RadioCall, in, &count);
+    gsize count = 0;
+    const RadioCall* calls = gbinder_reader_read_hidl_type_vec
+        (in, RadioCall, &count);
 
     if (calls) {
         guint i;
@@ -1834,8 +1777,8 @@ ril_binder_radio_decode_last_call_fail_cause(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioLastCallFailCauseInfo* info = ril_binder_radio_decode_struct
-        (RadioLastCallFailCauseInfo, in);
+    const RadioLastCallFailCauseInfo* info = gbinder_reader_read_hidl_struct
+        (in, RadioLastCallFailCauseInfo);
 
     if (info) {
         grilio_encode_int32(out, info->causeCode);
@@ -1884,9 +1827,9 @@ ril_binder_radio_decode_operator_info_list(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    guint32 count = 0;
-    const RadioOperatorInfo* ops = ril_binder_radio_decode_array
-        (RadioOperatorInfo, in, &count);
+    gsize count = 0;
+    const RadioOperatorInfo* ops = gbinder_reader_read_hidl_type_vec
+        (in, RadioOperatorInfo, &count);
 
     if (ops) {
         guint i;
@@ -1938,9 +1881,9 @@ ril_binder_radio_decode_data_call_list(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    guint32 count = 0;
-    const RadioDataCall* calls = ril_binder_radio_decode_array
-        (RadioDataCall, in, &count);
+    gsize count = 0;
+    const RadioDataCall* calls = gbinder_reader_read_hidl_type_vec
+        (in, RadioDataCall, &count);
 
     if (calls) {
         guint i;
@@ -1964,8 +1907,8 @@ ril_binder_radio_decode_setup_data_call_result(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioDataCall* call = ril_binder_radio_decode_struct
-        (RadioDataCall, in);
+    const RadioDataCall* call = gbinder_reader_read_hidl_struct
+        (in, RadioDataCall);
 
     if (call) {
         grilio_encode_int32(out, DATA_CALL_VERSION);
@@ -2005,15 +1948,15 @@ ril_binder_radio_decode_gsm_broadcast_sms_config(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    guint32 count = 0;
-    const RadioGsmBroadcastSmsConfig* configs = ril_binder_radio_decode_array
-        (RadioGsmBroadcastSmsConfig, in, &count);
+    gsize n = 0;
+    const RadioGsmBroadcastSmsConfig* configs =
+        gbinder_reader_read_hidl_type_vec(in, RadioGsmBroadcastSmsConfig, &n);
 
     if (configs) {
         guint i;
 
-        grilio_encode_int32(out, count);
-        for (i = 0; i < count; i++) {
+        grilio_encode_int32(out, n);
+        for (i = 0; i < n; i++) {
             const RadioGsmBroadcastSmsConfig* config = configs + i;
 
             grilio_encode_int32(out, config->fromServiceId);
@@ -2094,8 +2037,8 @@ ril_binder_radio_decode_signal_strength(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioSignalStrength* strength = ril_binder_radio_decode_struct
-        (RadioSignalStrength, in);
+    const RadioSignalStrength* strength = gbinder_reader_read_hidl_struct
+        (in, RadioSignalStrength);
 
     if (strength) {
         /* RIL_SignalStrength_v6 */
@@ -2131,8 +2074,8 @@ ril_binder_radio_decode_supp_svc_notification(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioSuppSvcNotification* notify = ril_binder_radio_decode_struct
-        (RadioSuppSvcNotification, in);
+    const RadioSuppSvcNotification* notify = gbinder_reader_read_hidl_struct
+        (in, RadioSuppSvcNotification);
 
     if (notify) {
         grilio_encode_int32(out, notify->isMT);
@@ -2154,8 +2097,8 @@ ril_binder_radio_decode_sim_refresh(
     GBinderReader* in,
     GByteArray* out)
 {
-    const RadioSimRefresh* refresh = ril_binder_radio_decode_struct
-        (RadioSimRefresh, in);
+    const RadioSimRefresh* refresh = gbinder_reader_read_hidl_struct
+        (in, RadioSimRefresh);
 
     if (refresh) {
         grilio_encode_int32(out, refresh->type);
@@ -2350,9 +2293,9 @@ ril_binder_radio_decode_cell_info_list(
     GByteArray* out)
 {
     gboolean ok = FALSE;
-    guint32 count = 0;
-    const RadioCellInfo* cells = ril_binder_radio_decode_array
-        (RadioCellInfo, in, &count);
+    gsize count = 0;
+    const RadioCellInfo* cells = gbinder_reader_read_hidl_type_vec
+        (in, RadioCellInfo, &count);
 
     if (cells) {
         guint i, n = 0;
