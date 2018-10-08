@@ -9,7 +9,8 @@ Source: %{name}-%{version}.tar.bz2
 
 Requires: ofono >= 1.21+git28
 Requires: libgrilio >= 1.0.25
-BuildRequires: pkgconfig(libgbinder)
+Requires: libgbinder >= 1.0.9
+BuildRequires: pkgconfig(libgbinder) >= 1.0.9
 BuildRequires: pkgconfig(libgrilio) >= 1.0.25
 BuildRequires: ofono-devel >= 1.21+git28
 
