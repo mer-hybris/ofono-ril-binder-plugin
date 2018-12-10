@@ -1,5 +1,5 @@
 Name: ofono-ril-binder-plugin
-Version: 0.0.4
+Version: 0.0.5
 Release: 1
 Summary: Ofono RIL binder transport plugin
 Group: Development/Libraries
