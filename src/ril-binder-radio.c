@@ -1233,7 +1233,7 @@ ril_binder_radio_encode_set_facility_lock(
     gint32 count, lock_num, cls_num;
 
     ril_binder_radio_init_parser(&parser, in);
-    if (grilio_parser_get_int32(&parser, &count) && count == 4 &&
+    if (grilio_parser_get_int32(&parser, &count) && count == 5 &&
         grilio_parser_get_nullable_utf8(&parser, &fac) &&
         grilio_parser_get_nullable_utf8(&parser, &lock) &&
         grilio_parser_get_nullable_utf8(&parser, &pwd) &&
