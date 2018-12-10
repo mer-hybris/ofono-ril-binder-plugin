@@ -13,9 +13,9 @@
  *   2. Redistributions in binary form must reproduce the above copyright
  *      notice, this list of conditions and the following disclaimer in the
  *      documentation and/or other materials provided with the distribution.
- *   3. Neither the name of Jolla Ltd nor the names of its contributors may
- *      be used to endorse or promote products derived from this software
- *      without specific prior written permission.
+ *   3. Neither the names of the copyright holders nor the names of its
+ *      contributors may be used to endorse or promote products derived
+ *      from this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -56,24 +56,6 @@ typedef enum radio_indication_type {
     IND_UNSOLICITED,
     IND_ACK_EXP
 } RadioIndicationType;
-
-typedef struct radio_string {
-    union {
-        guint64 value;
-        const char* str;
-    } data;
-    guint32 len;
-    guint8 owns_buffer;
-} ALIGNED(4) RadioString;
-
-typedef struct radio_vector {
-    union {
-        guint64 value;
-        const void* ptr;
-    } data;
-    guint32 count;
-    guint8 owns_buffer;
-} ALIGNED(4) RadioVector;
 
 #endif /* RIL_BINDER_TYPES_H */
 

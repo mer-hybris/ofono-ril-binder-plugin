@@ -122,7 +122,7 @@ typedef struct radio_card_status {
     gint32 gsmUmtsSubscriptionAppIndex ALIGNED(4);
     gint32 cdmaSubscriptionAppIndex ALIGNED(4);
     gint32 imsSubscriptionAppIndex ALIGNED(4);
-    RadioVector apps ALIGNED(8); /* vec<RadioAppStatus> */
+    GBinderHidlVec apps ALIGNED(8); /* vec<RadioAppStatus> */
 } ALIGNED(8) RadioCardStatus;
 G_STATIC_ASSERT(sizeof(RadioCardStatus) == 40);
 
@@ -130,8 +130,8 @@ typedef struct radio_app_status {
     gint32 appType ALIGNED(4);
     gint32 appState ALIGNED(4);
     gint32 persoSubstate ALIGNED(4);
-    RadioString aid ALIGNED(8);
-    RadioString label ALIGNED(8);
+    GBinderHidlString aid ALIGNED(8);
+    GBinderHidlString label ALIGNED(8);
     gint32 pinReplaced ALIGNED(4);
     gint32 pin1 ALIGNED(4);
     gint32 pin2 ALIGNED(4);
@@ -141,7 +141,7 @@ G_STATIC_ASSERT(sizeof(RadioAppStatus) == 64);
 typedef struct radio_uus_info {
     gint32 uusType ALIGNED(4);
     gint32 uusDcs ALIGNED(4);
-    RadioString uusData ALIGNED(8);
+    GBinderHidlString uusData ALIGNED(8);
 } ALIGNED(8) RadioUusInfo;
 G_STATIC_ASSERT(sizeof(RadioUusInfo) == 24);
 
@@ -154,24 +154,24 @@ typedef struct radio_call {
     guint8 als ALIGNED(1);
     guint8 isVoice ALIGNED(1);
     guint8 isVoicePrivacy ALIGNED(1);
-    RadioString number ALIGNED(8);
+    GBinderHidlString number ALIGNED(8);
     gint32 numberPresentation ALIGNED(4);
-    RadioString name ALIGNED(8);
+    GBinderHidlString name ALIGNED(8);
     gint32 namePresentation ALIGNED(4);
-    RadioVector uusInfo ALIGNED(8); /* vec<RadioUusInfo> */
+    GBinderHidlVec uusInfo ALIGNED(8); /* vec<RadioUusInfo> */
 } ALIGNED(8) RadioCall;
 G_STATIC_ASSERT(sizeof(RadioCall) == 88);
 
 typedef struct radio_dial {
-    RadioString address ALIGNED(8);
+    GBinderHidlString address ALIGNED(8);
     gint32 clir ALIGNED(4);
-    RadioVector uusInfo ALIGNED(8); /* vec<RadioUusInfo> */
+    GBinderHidlVec uusInfo ALIGNED(8); /* vec<RadioUusInfo> */
 } ALIGNED(8) RadioDial;
 G_STATIC_ASSERT(sizeof(RadioDial) == 40);
 
 typedef struct radio_last_call_fail_cause_info {
     gint32 causeCode ALIGNED(4);
-    RadioString vendorCause ALIGNED(8);
+    GBinderHidlString vendorCause ALIGNED(8);
 } ALIGNED(8) RadioLastCallFailCauseInfo;
 G_STATIC_ASSERT(sizeof(RadioLastCallFailCauseInfo) == 24);
 
@@ -183,21 +183,21 @@ enum radio_operator_status {
 };
 
 typedef struct radio_operator_info {
-    RadioString alphaLong ALIGNED(8);
-    RadioString alphaShort ALIGNED(8);
-    RadioString operatorNumeric ALIGNED(8);
+    GBinderHidlString alphaLong ALIGNED(8);
+    GBinderHidlString alphaShort ALIGNED(8);
+    GBinderHidlString operatorNumeric ALIGNED(8);
     gint32 status ALIGNED(4);
 } ALIGNED(8) RadioOperatorInfo;
 G_STATIC_ASSERT(sizeof(RadioOperatorInfo) == 56);
 
 typedef struct radio_data_profile {
     gint32 profileId ALIGNED(4);
-    RadioString apn ALIGNED(8);
-    RadioString protocol ALIGNED(8);
-    RadioString roamingProtocol ALIGNED(8);
+    GBinderHidlString apn ALIGNED(8);
+    GBinderHidlString protocol ALIGNED(8);
+    GBinderHidlString roamingProtocol ALIGNED(8);
     gint32 authType ALIGNED(4);
-    RadioString user ALIGNED(8);
-    RadioString password ALIGNED(8);
+    GBinderHidlString user ALIGNED(8);
+    GBinderHidlString password ALIGNED(8);
     gint32 type ALIGNED(4);
     gint32 maxConnsTime ALIGNED(4);
     gint32 maxConns ALIGNED(4);
@@ -207,7 +207,7 @@ typedef struct radio_data_profile {
     gint32 bearerBitmap ALIGNED(4);
     gint32 mtu ALIGNED(4);
     gint32 mvnoType ALIGNED(4);
-    RadioString mvnoMatchData ALIGNED(8);
+    GBinderHidlString mvnoMatchData ALIGNED(8);
 } ALIGNED(8) RadioDataProfile;
 G_STATIC_ASSERT(sizeof(RadioDataProfile) == 152);
 
@@ -216,12 +216,12 @@ typedef struct radio_data_call {
     gint32 suggestedRetryTime ALIGNED(4);
     gint32 cid ALIGNED(4);
     gint32 active ALIGNED(4);
-    RadioString type ALIGNED(8);
-    RadioString ifname ALIGNED(8);
-    RadioString addresses ALIGNED(8);
-    RadioString dnses ALIGNED(8);
-    RadioString gateways ALIGNED(8);
-    RadioString pcscf ALIGNED(8);
+    GBinderHidlString type ALIGNED(8);
+    GBinderHidlString ifname ALIGNED(8);
+    GBinderHidlString addresses ALIGNED(8);
+    GBinderHidlString dnses ALIGNED(8);
+    GBinderHidlString gateways ALIGNED(8);
+    GBinderHidlString pcscf ALIGNED(8);
     gint32 mtu ALIGNED(4);
 } ALIGNED(8) RadioDataCall;
 G_STATIC_ASSERT(sizeof(RadioDataCall) == 120);
@@ -231,20 +231,20 @@ G_STATIC_ASSERT(sizeof(RadioDataCall) == 120);
 
 typedef struct radio_sms_write_args {
     gint32 status ALIGNED(4);
-    RadioString pdu ALIGNED(8);
-    RadioString smsc ALIGNED(8);
+    GBinderHidlString pdu ALIGNED(8);
+    GBinderHidlString smsc ALIGNED(8);
 } ALIGNED(8) RadioSmsWriteArgs;
 G_STATIC_ASSERT(sizeof(RadioSmsWriteArgs) == 40);
 
 typedef struct GsmSmsMessage {
-    RadioString smscPdu ALIGNED(8);
-    RadioString pdu ALIGNED(8);
+    GBinderHidlString smscPdu ALIGNED(8);
+    GBinderHidlString pdu ALIGNED(8);
 } ALIGNED(8) RadioGsmSmsMessage;
 G_STATIC_ASSERT(sizeof(RadioGsmSmsMessage) == 32);
 
 typedef struct SendSmsResult {
     gint32 messageRef ALIGNED(4);
-    RadioString ackPDU ALIGNED(8);
+    GBinderHidlString ackPDU ALIGNED(8);
     gint32 errorCode ALIGNED(4);
 } ALIGNED(8) RadioSendSmsResult;
 G_STATIC_ASSERT(sizeof(RadioSendSmsResult) == 32);
@@ -252,20 +252,20 @@ G_STATIC_ASSERT(sizeof(RadioSendSmsResult) == 32);
 typedef struct radio_icc_io {
     gint32 command ALIGNED(4);
     gint32 fileId ALIGNED(4);
-    RadioString path ALIGNED(8);
+    GBinderHidlString path ALIGNED(8);
     gint32 p1 ALIGNED(4);
     gint32 p2 ALIGNED(4);
     gint32 p3 ALIGNED(4);
-    RadioString data ALIGNED(8);
-    RadioString pin2 ALIGNED(8);
-    RadioString aid ALIGNED(8);
+    GBinderHidlString data ALIGNED(8);
+    GBinderHidlString pin2 ALIGNED(8);
+    GBinderHidlString aid ALIGNED(8);
 } ALIGNED(8) RadioIccIo;
 G_STATIC_ASSERT(sizeof(RadioIccIo) == 88);
 
 typedef struct radio_icc_io_result {
     gint32 sw1 ALIGNED(4);
     gint32 sw2 ALIGNED(4);
-    RadioString response ALIGNED(8);
+    GBinderHidlString response ALIGNED(8);
 } ALIGNED(8) RadioIccIoResult;
 G_STATIC_ASSERT(sizeof(RadioIccIoResult) == 24);
 
@@ -274,7 +274,7 @@ typedef struct radio_call_forward_info {
     gint32 reason ALIGNED(4);
     gint32 serviceClass ALIGNED(4);
     gint32 toa ALIGNED(4);
-    RadioString number ALIGNED(8);
+    GBinderHidlString number ALIGNED(8);
     gint32 timeSeconds ALIGNED(4);
 } ALIGNED(8) RadioCallForwardInfo;
 G_STATIC_ASSERT(sizeof(RadioCallForwardInfo) == 40);
@@ -291,11 +291,11 @@ typedef enum radio_cell_info_type {
 
 typedef struct radio_cell_identity {
     gint32 cellInfoType ALIGNED(4);
-    RadioVector gsm ALIGNED(8);     /* vec<RadioCellIdentityGsm> */
-    RadioVector wcdma ALIGNED(8);   /* vec<RadioCellIdentityWcdma> */
-    RadioVector cdma ALIGNED(8);    /* vec<RadioCellIdentityCdma> */
-    RadioVector lte ALIGNED(8);     /* vec<RadioCellIdentityLte> */
-    RadioVector tdscdma ALIGNED(8); /* vec<RadioCellIdentityTdscdma> */
+    GBinderHidlVec gsm ALIGNED(8);     /* vec<RadioCellIdentityGsm> */
+    GBinderHidlVec wcdma ALIGNED(8);   /* vec<RadioCellIdentityWcdma> */
+    GBinderHidlVec cdma ALIGNED(8);    /* vec<RadioCellIdentityCdma> */
+    GBinderHidlVec lte ALIGNED(8);     /* vec<RadioCellIdentityLte> */
+    GBinderHidlVec tdscdma ALIGNED(8); /* vec<RadioCellIdentityTdscdma> */
 } ALIGNED(8) RadioCellIdentity;
 G_STATIC_ASSERT(sizeof(RadioCellIdentity) == 88);
 
@@ -304,17 +304,17 @@ typedef struct radio_cell_info {
     guint8 registered ALIGNED(1);
     gint32 timeStampType ALIGNED(4);
     guint64 timeStamp ALIGNED(8);
-    RadioVector gsm ALIGNED(8);     /* vec<RadioCellInfoGsm>  */
-    RadioVector cdma ALIGNED(8);    /* vec<RadioCellInfoCdma>  */
-    RadioVector lte ALIGNED(8);     /* vec<RadioCellInfoLte> */
-    RadioVector wcdma ALIGNED(8);   /* vec<RadioCellInfoWcdma>  */
-    RadioVector tdscdma ALIGNED(8); /* vec<RadioCellInfoTdscdma>  */
+    GBinderHidlVec gsm ALIGNED(8);     /* vec<RadioCellInfoGsm>  */
+    GBinderHidlVec cdma ALIGNED(8);    /* vec<RadioCellInfoCdma>  */
+    GBinderHidlVec lte ALIGNED(8);     /* vec<RadioCellInfoLte> */
+    GBinderHidlVec wcdma ALIGNED(8);   /* vec<RadioCellInfoWcdma>  */
+    GBinderHidlVec tdscdma ALIGNED(8); /* vec<RadioCellInfoTdscdma>  */
 } ALIGNED(8) RadioCellInfo;
 G_STATIC_ASSERT(sizeof(RadioCellInfo) == 104);
 
 typedef struct radio_cell_identity_gsm {
-    RadioString mcc ALIGNED(8);
-    RadioString mnc ALIGNED(8);
+    GBinderHidlString mcc ALIGNED(8);
+    GBinderHidlString mnc ALIGNED(8);
     gint32 lac ALIGNED(4);
     gint32 cid ALIGNED(4);
     gint32 arfcn ALIGNED(4);
@@ -323,8 +323,8 @@ typedef struct radio_cell_identity_gsm {
 G_STATIC_ASSERT(sizeof(RadioCellIdentityGsm) == 48);
 
 typedef struct radio_cell_identity_wcdma {
-    RadioString mcc ALIGNED(8);
-    RadioString mnc ALIGNED(8);
+    GBinderHidlString mcc ALIGNED(8);
+    GBinderHidlString mnc ALIGNED(8);
     gint32 lac ALIGNED(4);
     gint32 cid ALIGNED(4);
     gint32 psc ALIGNED(4);
@@ -342,8 +342,8 @@ typedef struct radio_cell_identity_cdma {
 G_STATIC_ASSERT(sizeof(RadioCellIdentityCdma) == 20);
 
 typedef struct radio_cell_identity_lte {
-    RadioString mcc ALIGNED(8);
-    RadioString mnc ALIGNED(8);
+    GBinderHidlString mcc ALIGNED(8);
+    GBinderHidlString mnc ALIGNED(8);
     gint32 ci ALIGNED(4);
     gint32 pci ALIGNED(4);
     gint32 tac ALIGNED(4);
@@ -352,8 +352,8 @@ typedef struct radio_cell_identity_lte {
 G_STATIC_ASSERT(sizeof(RadioCellIdentityLte) == 48);
 
 typedef struct radio_cell_identity_tdscdma {
-    RadioString mcc ALIGNED(8);
-    RadioString mnc ALIGNED(8);
+    GBinderHidlString mcc ALIGNED(8);
+    GBinderHidlString mnc ALIGNED(8);
     gint32 lac ALIGNED(4);
     gint32 cid ALIGNED(4);
     gint32 cpid ALIGNED(4);
@@ -484,14 +484,14 @@ typedef struct radio_supp_svc_notification {
     gint32 code ALIGNED(4);
     gint32 index ALIGNED(4);
     gint32 type ALIGNED(4);
-    RadioString number ALIGNED(8);
+    GBinderHidlString number ALIGNED(8);
 } ALIGNED(8) RadioSuppSvcNotification;
 G_STATIC_ASSERT(sizeof(RadioSuppSvcNotification) == 32);
 
 typedef struct radio_sim_refresh {
     gint32 type ALIGNED(4);
     gint32 efId ALIGNED(4);
-    RadioString aid ALIGNED(8);
+    GBinderHidlString aid ALIGNED(8);
 } ALIGNED(8) RadioSimRefresh;
 G_STATIC_ASSERT(sizeof(RadioSimRefresh) == 24);
 
@@ -502,7 +502,7 @@ G_STATIC_ASSERT(sizeof(RadioSimRefresh) == 24);
 static
 gboolean
 ril_binder_radio_string_init(
-    RadioString* str,
+    GBinderHidlString* str,
     const char* chars)
 {
     str->owns_buffer = TRUE;
@@ -1298,7 +1298,7 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
 
     ril_binder_radio_init_parser(&parser, in);
     if (grilio_parser_get_int32(&parser, &count)) {
-        RadioVector* vec = g_new0(RadioVector, 1);
+        GBinderHidlVec* vec = g_new0(GBinderHidlVec, 1);
         RadioGsmBroadcastSmsConfig* configs = NULL;
         gboolean ok = TRUE;
         guint i;
@@ -1336,7 +1336,7 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
             gbinder_writer_append_int32(&writer, grilio_request_serial(in));
 
             /* Write the parent structure */
-            parent.offset = G_STRUCT_OFFSET(RadioVector, data.ptr);
+            parent.offset = G_STRUCT_OFFSET(GBinderHidlVec, data.ptr);
             parent.index = gbinder_writer_append_buffer_object(&writer,
                 vec, sizeof(*vec));
 
