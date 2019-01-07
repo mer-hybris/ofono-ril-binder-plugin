@@ -32,7 +32,6 @@ LIB = $(LIB_SONAME)
 #
 
 SRC = \
-  ril-binder-oemhook-qcom.c \
   ril-binder-plugin.c \
   ril-binder-radio.c
 

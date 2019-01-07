@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2018 Jolla Ltd.
- * Copyright (C) 2018 Slava Monich <slava.monich@jolla.com>
+ * Copyright (C) 2018-2019 Jolla Ltd.
+ * Copyright (C) 2018-2019 Slava Monich <slava.monich@jolla.com>
  *
  * You may use this file under the terms of BSD license as follows:
  *
@@ -31,7 +31,6 @@
  */
 
 #include "ril-binder-radio.h"
-#include "ril-binder-oemhook.h"
 
 #include <ofono/ril-constants.h>
 #include <ofono/log.h>
@@ -55,7 +54,7 @@ typedef struct ril_binder_radio_call {
     guint resp_tx;
     gboolean (*encode)(GRilIoRequest* in, GBinderLocalRequest* out);
     gboolean (*decode)(GBinderReader* in, GByteArray* out);
-    const char *name;
+    const char* name;
 } RilBinderRadioCall;
 
 typedef struct ril_binder_radio_event {
@@ -82,7 +81,6 @@ struct ril_binder_radio {
     GBinderLocalObject* response;
     GBinderLocalObject* indication;
     gulong death_id;
-    RilBinderOemHook* oemhook;
     GByteArray* buf;
     char* fqname;
 };
@@ -3341,7 +3339,8 @@ static
 GRILIO_SEND_STATUS
 ril_binder_radio_send(
     GRilIoTransport* transport,
-    GRilIoRequest* req, guint code)
+    GRilIoRequest* req,
+    guint code)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(transport);
     const RilBinderRadioCall* call = g_hash_table_lookup(self->req_map,
@@ -3383,10 +3382,6 @@ ril_binder_radio_shutdown(
     const gboolean was_connected = (self->remote != NULL);
 
     ril_binder_radio_drop_radio(self);
-    if (self->oemhook) {
-        ril_binder_oemhook_free(self->oemhook);
-        self->oemhook = NULL;
-    }
     if (was_connected) {
         grilio_transport_signal_disconnected(transport);
     }
@@ -3408,8 +3403,7 @@ ril_binder_radio_ack(
 GRilIoTransport*
 ril_binder_radio_new(
     const char* dev,
-    const char* name,
-    const char* hook)
+    const char* name)
 {
     RilBinderRadio* self = g_object_new(RIL_TYPE_BINDER_RADIO, NULL);
     GRilIoTransport* transport = &self->parent;
@@ -3446,12 +3440,6 @@ ril_binder_radio_new(
             DBG_(self, "setResponseFunctions status %d", status);
             gbinder_local_request_unref(req);
             gbinder_remote_reply_unref(reply);
-
-            /* Add the hook */
-            if (!g_strcmp0(hook, "qcom")) {
-                self->oemhook = ril_binder_oemhook_new_qcom(self->sm, self,
-                    dev, name);
-            }
             return transport;
         }
     }
@@ -3520,7 +3508,6 @@ void ril_binder_radio_finalize(
     RilBinderRadio* self = RIL_BINDER_RADIO(object);
 
     ril_binder_radio_drop_radio(self);
-    ril_binder_oemhook_free(self->oemhook);
     gbinder_servicemanager_unref(self->sm);
     gbinder_client_unref(self->client);
     gutil_idle_queue_cancel_all(self->idle);
