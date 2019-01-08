@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2018 Jolla Ltd.
- * Copyright (C) 2018 Slava Monich <slava.monich@jolla.com>
+ * Copyright (C) 2018-2019 Jolla Ltd.
+ * Copyright (C) 2018-2019 Slava Monich <slava.monich@jolla.com>
  *
  * You may use this file under the terms of BSD license as follows:
  *
@@ -38,7 +38,6 @@
 #define ALIGNED(x) __attribute__ ((aligned(x)))
 
 typedef struct ril_binder_radio RilBinderRadio;
-typedef struct ril_binder_oemhook RilBinderOemHook;
 
 typedef struct radio_response_info {
     guint32 type;
