@@ -35,26 +35,7 @@
 
 #include <gutil_types.h>
 
-#define ALIGNED(x) __attribute__ ((aligned(x)))
-
 typedef struct ril_binder_radio RilBinderRadio;
-
-typedef struct radio_response_info {
-    guint32 type;
-    guint32 serial;
-    guint32 error;
-} RadioResponseInfo;
-
-typedef enum radio_response_type {
-    RESP_SOLICITED,
-    RESP_SOLICITED_ACK,
-    RESP_SOLICITED_ACK_EXP
-} RadioResponseType;
-
-typedef enum radio_indication_type {
-    IND_UNSOLICITED,
-    IND_ACK_EXP
-} RadioIndicationType;
 
 #endif /* RIL_BINDER_TYPES_H */
 
