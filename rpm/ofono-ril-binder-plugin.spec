@@ -8,10 +8,10 @@ URL: https://github.com/mer-hybris/ofono-ril-binder-plugin
 Source: %{name}-%{version}.tar.bz2
 
 Requires: ofono >= 1.21+git28
-Requires: libgrilio >= 1.0.25
+Requires: libgrilio >= 1.0.26
 Requires: libgbinder >= 1.0.9
 BuildRequires: pkgconfig(libgbinder) >= 1.0.16
-BuildRequires: pkgconfig(libgrilio) >= 1.0.25
+BuildRequires: pkgconfig(libgrilio) >= 1.0.26
 BuildRequires: ofono-devel >= 1.21+git28
 
 %define plugin_dir %{_libdir}/ofono/plugins

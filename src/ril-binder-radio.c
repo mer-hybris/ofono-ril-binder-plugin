@@ -38,7 +38,7 @@
 #include "grilio_encode.h"
 #include "grilio_parser.h"
 #include "grilio_request.h"
-#include "grilio_transport_p.h"
+#include "grilio_transport_impl.h"
 
 #include <gbinder.h>
 
