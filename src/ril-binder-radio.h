@@ -42,10 +42,6 @@ ril_binder_radio_new(
     const char* dev,
     const char* name);
 
-void
-ril_binder_radio_ack(
-    RilBinderRadio* radio);
-
 #endif /* RIL_BINDER_RADIO_H */
 
 /*

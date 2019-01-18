@@ -9,7 +9,7 @@
 # on all platforms. 
 #
 
-LDPKGS = libgrilio libgbinder libglibutil gobject-2.0 glib-2.0
+LDPKGS = libgrilio libgbinder libgbinder-radio libglibutil gobject-2.0 glib-2.0
 PKGS = ofono $(LDPKGS)
 
 #

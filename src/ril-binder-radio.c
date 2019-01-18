@@ -42,16 +42,26 @@
 
 #include <gbinder.h>
 
+#include <radio_instance.h>
+
 #include <gutil_idlequeue.h>
 #include <gutil_log.h>
 #include <gutil_misc.h>
+
+enum {
+    RADIO_EVENT_INDICATION,
+    RADIO_EVENT_RESPONSE,
+    RADIO_EVENT_ACK,
+    RADIO_EVENT_DEATH,
+    RADIO_EVENT_COUNT
+};
 
 typedef GRilIoTransportClass RilBinderRadioClass;
 
 typedef struct ril_binder_radio_call {
     guint code;
-    guint req_tx;
-    guint resp_tx;
+    RADIO_REQ req_tx;
+    RADIO_RESP resp_tx;
     gboolean (*encode)(GRilIoRequest* in, GBinderLocalRequest* out);
     gboolean (*decode)(GBinderReader* in, GByteArray* out);
     const char* name;
@@ -59,7 +69,7 @@ typedef struct ril_binder_radio_call {
 
 typedef struct ril_binder_radio_event {
     guint code;
-    guint unsol_tx;
+    RADIO_IND unsol_tx;
     gboolean (*decode)(GBinderReader* in, GByteArray* out);
     const char* name;
 } RilBinderRadioEvent;
@@ -75,14 +85,9 @@ struct ril_binder_radio {
     GHashTable* req_map;      /* code -> RilBinderRadioCall */
     GHashTable* resp_map;     /* resp_tx -> RilBinderRadioCall */
     GHashTable* unsol_map;    /* unsol_tx -> RilBinderRadioEvent */
-    GBinderServiceManager* sm;
-    GBinderClient* client;
-    GBinderRemoteObject* remote;
-    GBinderLocalObject* response;
-    GBinderLocalObject* indication;
-    gulong death_id;
     GByteArray* buf;
-    char* fqname;
+    RadioInstance* radio;
+    gulong radio_event_id[RADIO_EVENT_COUNT];
 };
 
 G_DEFINE_TYPE(RilBinderRadio, ril_binder_radio, GRILIO_TYPE_TRANSPORT)
@@ -92,406 +97,7 @@ G_DEFINE_TYPE(RilBinderRadio, ril_binder_radio, GRILIO_TYPE_TRANSPORT)
 #define RIL_BINDER_RADIO(obj) G_TYPE_CHECK_INSTANCE_CAST((obj), \
         RIL_TYPE_BINDER_RADIO, RilBinderRadio)
 
-#define RADIO_IFACE(x)     "android.hardware.radio@1.0::" x
-#define RADIO_REMOTE       RADIO_IFACE("IRadio")
-#define RADIO_RESPONSE     RADIO_IFACE("IRadioResponse")
-#define RADIO_INDICATION   RADIO_IFACE("IRadioIndication")
-
 #define DBG_(self,fmt,args...) DBG("%s" fmt, (self)->parent.log_prefix, ##args)
-
-/*==========================================================================*
- * Calls
- *==========================================================================*/
-
-/* android.hardware.radio@1.0::IRadio */
-#define RADIO_REQ_SET_RESPONSE_FUNCTIONS     (1) /* setResponseFunctions */
-#define RADIO_REQ_RESPONSE_ACKNOWLEDGEMENT (130) /* responseAcknowledgement */
-
-/* android.hardware.radio@1.0::IRadioResponse */
-#define RADIO_RESP_ACKNOWLEDGE_REQUEST     (129) /* acknowledgeRequest */
-
-/* android.hardware.radio@1.0::IRadioIndication */
-#define RADIO_IND_RIL_CONNECTED             (33) /* rilConnected */
-
-/* Types defined in types.hal */
-typedef struct radio_card_status {
-    gint32 cardState ALIGNED(4);
-    gint32 universalPinState ALIGNED(4);
-    gint32 gsmUmtsSubscriptionAppIndex ALIGNED(4);
-    gint32 cdmaSubscriptionAppIndex ALIGNED(4);
-    gint32 imsSubscriptionAppIndex ALIGNED(4);
-    GBinderHidlVec apps ALIGNED(8); /* vec<RadioAppStatus> */
-} ALIGNED(8) RadioCardStatus;
-G_STATIC_ASSERT(sizeof(RadioCardStatus) == 40);
-
-typedef struct radio_app_status {
-    gint32 appType ALIGNED(4);
-    gint32 appState ALIGNED(4);
-    gint32 persoSubstate ALIGNED(4);
-    GBinderHidlString aid ALIGNED(8);
-    GBinderHidlString label ALIGNED(8);
-    gint32 pinReplaced ALIGNED(4);
-    gint32 pin1 ALIGNED(4);
-    gint32 pin2 ALIGNED(4);
-} ALIGNED(8) RadioAppStatus;
-G_STATIC_ASSERT(sizeof(RadioAppStatus) == 64);
-
-typedef struct radio_uus_info {
-    gint32 uusType ALIGNED(4);
-    gint32 uusDcs ALIGNED(4);
-    GBinderHidlString uusData ALIGNED(8);
-} ALIGNED(8) RadioUusInfo;
-G_STATIC_ASSERT(sizeof(RadioUusInfo) == 24);
-
-typedef struct radio_call {
-    gint32 state ALIGNED(4);
-    gint32 index ALIGNED(4);
-    gint32 toa ALIGNED(4);
-    guint8 isMpty ALIGNED(1);
-    guint8 isMT ALIGNED(1);
-    guint8 als ALIGNED(1);
-    guint8 isVoice ALIGNED(1);
-    guint8 isVoicePrivacy ALIGNED(1);
-    GBinderHidlString number ALIGNED(8);
-    gint32 numberPresentation ALIGNED(4);
-    GBinderHidlString name ALIGNED(8);
-    gint32 namePresentation ALIGNED(4);
-    GBinderHidlVec uusInfo ALIGNED(8); /* vec<RadioUusInfo> */
-} ALIGNED(8) RadioCall;
-G_STATIC_ASSERT(sizeof(RadioCall) == 88);
-
-typedef struct radio_dial {
-    GBinderHidlString address ALIGNED(8);
-    gint32 clir ALIGNED(4);
-    GBinderHidlVec uusInfo ALIGNED(8); /* vec<RadioUusInfo> */
-} ALIGNED(8) RadioDial;
-G_STATIC_ASSERT(sizeof(RadioDial) == 40);
-
-typedef struct radio_last_call_fail_cause_info {
-    gint32 causeCode ALIGNED(4);
-    GBinderHidlString vendorCause ALIGNED(8);
-} ALIGNED(8) RadioLastCallFailCauseInfo;
-G_STATIC_ASSERT(sizeof(RadioLastCallFailCauseInfo) == 24);
-
-enum radio_operator_status {
-    RADIO_OP_STATUS_UNKNOWN = 0,
-    RADIO_OP_AVAILABLE,
-    RADIO_OP_CURRENT,
-    RADIO_OP_FORBIDDEN
-};
-
-typedef struct radio_operator_info {
-    GBinderHidlString alphaLong ALIGNED(8);
-    GBinderHidlString alphaShort ALIGNED(8);
-    GBinderHidlString operatorNumeric ALIGNED(8);
-    gint32 status ALIGNED(4);
-} ALIGNED(8) RadioOperatorInfo;
-G_STATIC_ASSERT(sizeof(RadioOperatorInfo) == 56);
-
-typedef struct radio_data_profile {
-    gint32 profileId ALIGNED(4);
-    GBinderHidlString apn ALIGNED(8);
-    GBinderHidlString protocol ALIGNED(8);
-    GBinderHidlString roamingProtocol ALIGNED(8);
-    gint32 authType ALIGNED(4);
-    GBinderHidlString user ALIGNED(8);
-    GBinderHidlString password ALIGNED(8);
-    gint32 type ALIGNED(4);
-    gint32 maxConnsTime ALIGNED(4);
-    gint32 maxConns ALIGNED(4);
-    gint32 waitTime ALIGNED(4);
-    guint8 enabled ALIGNED(1);
-    gint32 supportedApnTypesBitmap ALIGNED(4);
-    gint32 bearerBitmap ALIGNED(4);
-    gint32 mtu ALIGNED(4);
-    gint32 mvnoType ALIGNED(4);
-    GBinderHidlString mvnoMatchData ALIGNED(8);
-} ALIGNED(8) RadioDataProfile;
-G_STATIC_ASSERT(sizeof(RadioDataProfile) == 152);
-
-typedef struct radio_data_call {
-    gint32 status ALIGNED(4);
-    gint32 suggestedRetryTime ALIGNED(4);
-    gint32 cid ALIGNED(4);
-    gint32 active ALIGNED(4);
-    GBinderHidlString type ALIGNED(8);
-    GBinderHidlString ifname ALIGNED(8);
-    GBinderHidlString addresses ALIGNED(8);
-    GBinderHidlString dnses ALIGNED(8);
-    GBinderHidlString gateways ALIGNED(8);
-    GBinderHidlString pcscf ALIGNED(8);
-    gint32 mtu ALIGNED(4);
-} ALIGNED(8) RadioDataCall;
-G_STATIC_ASSERT(sizeof(RadioDataCall) == 120);
-#define DATA_CALL_VERSION (11)
-
-#define DATA_CALL_VERSION (11)
-
-typedef struct radio_sms_write_args {
-    gint32 status ALIGNED(4);
-    GBinderHidlString pdu ALIGNED(8);
-    GBinderHidlString smsc ALIGNED(8);
-} ALIGNED(8) RadioSmsWriteArgs;
-G_STATIC_ASSERT(sizeof(RadioSmsWriteArgs) == 40);
-
-typedef struct GsmSmsMessage {
-    GBinderHidlString smscPdu ALIGNED(8);
-    GBinderHidlString pdu ALIGNED(8);
-} ALIGNED(8) RadioGsmSmsMessage;
-G_STATIC_ASSERT(sizeof(RadioGsmSmsMessage) == 32);
-
-typedef struct SendSmsResult {
-    gint32 messageRef ALIGNED(4);
-    GBinderHidlString ackPDU ALIGNED(8);
-    gint32 errorCode ALIGNED(4);
-} ALIGNED(8) RadioSendSmsResult;
-G_STATIC_ASSERT(sizeof(RadioSendSmsResult) == 32);
-
-typedef struct radio_icc_io {
-    gint32 command ALIGNED(4);
-    gint32 fileId ALIGNED(4);
-    GBinderHidlString path ALIGNED(8);
-    gint32 p1 ALIGNED(4);
-    gint32 p2 ALIGNED(4);
-    gint32 p3 ALIGNED(4);
-    GBinderHidlString data ALIGNED(8);
-    GBinderHidlString pin2 ALIGNED(8);
-    GBinderHidlString aid ALIGNED(8);
-} ALIGNED(8) RadioIccIo;
-G_STATIC_ASSERT(sizeof(RadioIccIo) == 88);
-
-typedef struct radio_icc_io_result {
-    gint32 sw1 ALIGNED(4);
-    gint32 sw2 ALIGNED(4);
-    GBinderHidlString response ALIGNED(8);
-} ALIGNED(8) RadioIccIoResult;
-G_STATIC_ASSERT(sizeof(RadioIccIoResult) == 24);
-
-typedef struct radio_call_forward_info {
-    gint32 status ALIGNED(4);
-    gint32 reason ALIGNED(4);
-    gint32 serviceClass ALIGNED(4);
-    gint32 toa ALIGNED(4);
-    GBinderHidlString number ALIGNED(8);
-    gint32 timeSeconds ALIGNED(4);
-} ALIGNED(8) RadioCallForwardInfo;
-G_STATIC_ASSERT(sizeof(RadioCallForwardInfo) == 40);
-
-typedef enum radio_cell_info_type {
-    CELL_INFO_GSM = 1,
-    CELL_INFO_CDMA,
-    CELL_INFO_LTE,
-    CELL_INFO_WCDMA,
-    CELL_INFO_TD_SCDMA
-} RadioCellInfoType;
-
-#define CELL_INVALID_VALUE (INT_MAX)
-
-typedef struct radio_cell_identity {
-    gint32 cellInfoType ALIGNED(4);
-    GBinderHidlVec gsm ALIGNED(8);     /* vec<RadioCellIdentityGsm> */
-    GBinderHidlVec wcdma ALIGNED(8);   /* vec<RadioCellIdentityWcdma> */
-    GBinderHidlVec cdma ALIGNED(8);    /* vec<RadioCellIdentityCdma> */
-    GBinderHidlVec lte ALIGNED(8);     /* vec<RadioCellIdentityLte> */
-    GBinderHidlVec tdscdma ALIGNED(8); /* vec<RadioCellIdentityTdscdma> */
-} ALIGNED(8) RadioCellIdentity;
-G_STATIC_ASSERT(sizeof(RadioCellIdentity) == 88);
-
-typedef struct radio_cell_info {
-    gint32 cellInfoType ALIGNED(4);
-    guint8 registered ALIGNED(1);
-    gint32 timeStampType ALIGNED(4);
-    guint64 timeStamp ALIGNED(8);
-    GBinderHidlVec gsm ALIGNED(8);     /* vec<RadioCellInfoGsm>  */
-    GBinderHidlVec cdma ALIGNED(8);    /* vec<RadioCellInfoCdma>  */
-    GBinderHidlVec lte ALIGNED(8);     /* vec<RadioCellInfoLte> */
-    GBinderHidlVec wcdma ALIGNED(8);   /* vec<RadioCellInfoWcdma>  */
-    GBinderHidlVec tdscdma ALIGNED(8); /* vec<RadioCellInfoTdscdma>  */
-} ALIGNED(8) RadioCellInfo;
-G_STATIC_ASSERT(sizeof(RadioCellInfo) == 104);
-
-typedef struct radio_cell_identity_gsm {
-    GBinderHidlString mcc ALIGNED(8);
-    GBinderHidlString mnc ALIGNED(8);
-    gint32 lac ALIGNED(4);
-    gint32 cid ALIGNED(4);
-    gint32 arfcn ALIGNED(4);
-    guint8 bsic ALIGNED(1);
-} ALIGNED(8) RadioCellIdentityGsm;
-G_STATIC_ASSERT(sizeof(RadioCellIdentityGsm) == 48);
-
-typedef struct radio_cell_identity_wcdma {
-    GBinderHidlString mcc ALIGNED(8);
-    GBinderHidlString mnc ALIGNED(8);
-    gint32 lac ALIGNED(4);
-    gint32 cid ALIGNED(4);
-    gint32 psc ALIGNED(4);
-    gint32 uarfcn ALIGNED(4);
-} ALIGNED(8) RadioCellIdentityWcdma;
-G_STATIC_ASSERT(sizeof(RadioCellIdentityWcdma) == 48);
-
-typedef struct radio_cell_identity_cdma {
-    gint32 networkId ALIGNED(4);
-    gint32 systemId ALIGNED(4);
-    gint32 baseStationId ALIGNED(4);
-    gint32 longitude ALIGNED(4);
-    gint32 latitude ALIGNED(4);
-} ALIGNED(4) RadioCellIdentityCdma;
-G_STATIC_ASSERT(sizeof(RadioCellIdentityCdma) == 20);
-
-typedef struct radio_cell_identity_lte {
-    GBinderHidlString mcc ALIGNED(8);
-    GBinderHidlString mnc ALIGNED(8);
-    gint32 ci ALIGNED(4);
-    gint32 pci ALIGNED(4);
-    gint32 tac ALIGNED(4);
-    gint32 earfcn ALIGNED(4);
-} ALIGNED(8) RadioCellIdentityLte;
-G_STATIC_ASSERT(sizeof(RadioCellIdentityLte) == 48);
-
-typedef struct radio_cell_identity_tdscdma {
-    GBinderHidlString mcc ALIGNED(8);
-    GBinderHidlString mnc ALIGNED(8);
-    gint32 lac ALIGNED(4);
-    gint32 cid ALIGNED(4);
-    gint32 cpid ALIGNED(4);
-} ALIGNED(8) RadioCellIdentityTdscdma;
-G_STATIC_ASSERT(sizeof(RadioCellIdentityTdscdma) == 48);
-
-typedef struct radio_voice_reg_state_result {
-    gint32 regState ALIGNED(4);
-    gint32 rat ALIGNED(4);
-    guint8 cssSupported ALIGNED(1);
-    gint32 roamingIndicator ALIGNED(4);
-    gint32 systemIsInPrl ALIGNED(4);
-    gint32 defaultRoamingIndicator ALIGNED(4);
-    gint32 reasonForDenial ALIGNED(4);
-    RadioCellIdentity cellIdentity ALIGNED(8);
-} ALIGNED(8) RadioVoiceRegStateResult;
-G_STATIC_ASSERT(sizeof(RadioVoiceRegStateResult) == 120);
-
-typedef struct radio_data_reg_state_result {
-    gint32 regState ALIGNED(4);
-    gint32 rat ALIGNED(4);
-    gint32 reasonDataDenied ALIGNED(4);
-    gint32 maxDataCalls ALIGNED(4);
-    RadioCellIdentity cellIdentity ALIGNED(8);
-} ALIGNED(8) RadioDataRegStateResult;
-G_STATIC_ASSERT(sizeof(RadioDataRegStateResult) == 104);
-
-typedef struct radio_signal_strength_gsm {
-    guint32 signalStrength ALIGNED(4);
-    guint32 bitErrorRate ALIGNED(4);
-    gint32 timingAdvance ALIGNED(4);
-} ALIGNED(4) RadioSignalStrengthGsm;
-G_STATIC_ASSERT(sizeof(RadioSignalStrengthGsm) == 12);
-
-typedef struct radio_signal_strength_wcdma {
-    gint32 signalStrength ALIGNED(4);
-    gint32 bitErrorRate ALIGNED(4);
-} ALIGNED(4) RadioSignalStrengthWcdma;
-G_STATIC_ASSERT(sizeof(RadioSignalStrengthWcdma) == 8);
-
-typedef struct radio_signal_strength_cdma {
-    guint32 dbm ALIGNED(4);
-    guint32 ecio ALIGNED(4);
-} ALIGNED(4) RadioSignalStrengthCdma;
-G_STATIC_ASSERT(sizeof(RadioSignalStrengthCdma) == 8);
-
-typedef struct radio_signal_strength_evdo {
-    guint32 dbm ALIGNED(4);
-    guint32 ecio ALIGNED(4);
-    guint32 signalNoiseRatio ALIGNED(4);
-} ALIGNED(4) RadioSignalStrengthEvdo;
-G_STATIC_ASSERT(sizeof(RadioSignalStrengthEvdo) == 12);
-
-typedef struct radio_signal_strength_lte {
-    guint32 signalStrength ALIGNED(4);
-    guint32 rsrp ALIGNED(4);
-    guint32 rsrq ALIGNED(4);
-    gint32 rssnr ALIGNED(4);
-    guint32 cqi ALIGNED(4);
-    guint32 timingAdvance ALIGNED(4);
-} ALIGNED(4) RadioSignalStrengthLte;
-G_STATIC_ASSERT(sizeof(RadioSignalStrengthLte) == 24);
-
-typedef struct radio_signal_strength_tdscdma {
-    guint32 rscp ALIGNED(4);
-} ALIGNED(4) RadioSignalStrengthTdScdma;
-G_STATIC_ASSERT(sizeof(RadioSignalStrengthTdScdma) == 4);
-
-typedef struct radio_signal_strength {
-    RadioSignalStrengthGsm gw ALIGNED(4);
-    RadioSignalStrengthCdma cdma ALIGNED(4);
-    RadioSignalStrengthEvdo evdo ALIGNED(4);
-    RadioSignalStrengthLte lte ALIGNED(4);
-    RadioSignalStrengthTdScdma tdScdma ALIGNED(4);
-} ALIGNED(4) RadioSignalStrength;
-G_STATIC_ASSERT(sizeof(RadioSignalStrength) == 60);
-
-typedef struct radio_cell_info_gsm {
-    RadioCellIdentityGsm cellIdentityGsm ALIGNED(8);
-    RadioSignalStrengthGsm signalStrengthGsm ALIGNED(4);
-} ALIGNED(8) RadioCellInfoGsm;
-G_STATIC_ASSERT(sizeof(RadioCellInfoGsm) == 64);
-
-typedef struct radio_cell_info_wcdma {
-    RadioCellIdentityWcdma cellIdentityWcdma ALIGNED(8);
-    RadioSignalStrengthWcdma signalStrengthWcdma ALIGNED(4);
-} ALIGNED(8) RadioCellInfoWcdma;
-G_STATIC_ASSERT(sizeof(RadioCellInfoWcdma) == 56);
-
-typedef struct radio_cell_info_cdma {
-    RadioCellIdentityCdma cellIdentityCdma ALIGNED(4);
-    RadioSignalStrengthCdma signalStrengthCdma ALIGNED(4);
-    RadioSignalStrengthEvdo signalStrengthEvdo ALIGNED(4);
-} ALIGNED(4) RadioCellInfoCdma;
-G_STATIC_ASSERT(sizeof(RadioCellInfoCdma) == 40);
-
-typedef struct radio_cell_info_lte {
-    RadioCellIdentityLte cellIdentityLte ALIGNED(8);
-    RadioSignalStrengthLte signalStrengthLte ALIGNED(4);
-} ALIGNED(8) RadioCellInfoLte;
-G_STATIC_ASSERT(sizeof(RadioCellInfoLte) == 72);
-
-typedef struct radio_cell_info_tdscdma {
-    RadioCellIdentityTdscdma cellIdentityTdscdma ALIGNED(8);
-    RadioSignalStrengthTdScdma signalStrengthTdscdma ALIGNED(4);
-} ALIGNED(8) RadioCellInfoTdscdma;
-G_STATIC_ASSERT(sizeof(RadioCellInfoTdscdma) == 56);
-
-typedef struct radio_gsm_broadcast_sms_config {
-    gint32 fromServiceId ALIGNED(4);
-    gint32 toServiceId ALIGNED(4);
-    gint32 fromCodeScheme ALIGNED(4);
-    gint32 toCodeScheme ALIGNED(4);
-    guint8 selected ALIGNED(1);
-} ALIGNED(4) RadioGsmBroadcastSmsConfig;
-G_STATIC_ASSERT(sizeof(RadioGsmBroadcastSmsConfig) == 20);
-
-typedef struct radio_select_uicc_sub {
-    gint32 slot ALIGNED(4);
-    gint32 appIndex ALIGNED(4);
-    gint32 subType ALIGNED(4);
-    gint32 actStatus ALIGNED(4);
-} ALIGNED(4) RadioSelectUiccSub;
-G_STATIC_ASSERT(sizeof(RadioSelectUiccSub) == 16);
-
-typedef struct radio_supp_svc_notification {
-    guint8 isMT ALIGNED(1);
-    gint32 code ALIGNED(4);
-    gint32 index ALIGNED(4);
-    gint32 type ALIGNED(4);
-    GBinderHidlString number ALIGNED(8);
-} ALIGNED(8) RadioSuppSvcNotification;
-G_STATIC_ASSERT(sizeof(RadioSuppSvcNotification) == 32);
-
-typedef struct radio_sim_refresh {
-    gint32 type ALIGNED(4);
-    gint32 efId ALIGNED(4);
-    GBinderHidlString aid ALIGNED(8);
-} ALIGNED(8) RadioSimRefresh;
-G_STATIC_ASSERT(sizeof(RadioSimRefresh) == 24);
 
 /*==========================================================================*
  * Utilities
@@ -1453,11 +1059,10 @@ ril_binder_radio_decode_string(
     GBinderReader* in,
     GByteArray* out)
 {
-    char* str = gbinder_reader_read_hidl_string(in);
+    const char* str = gbinder_reader_read_hidl_string_c(in);
 
     if (str) {
         grilio_encode_utf8(out, str);
-        g_free(str);
         return TRUE;
     }
     return FALSE;
@@ -1474,11 +1079,10 @@ ril_binder_radio_decode_string_n(
 
     grilio_encode_int32(out, n);
     for (i = 0; i < n; i++) {
-        char* str = gbinder_reader_read_hidl_string(in);
+        const char* str = gbinder_reader_read_hidl_string_c(in);
 
         if (str) {
             grilio_encode_utf8(out, str);
-            g_free(str);
         } else {
             return FALSE;
         }
@@ -1980,11 +1584,10 @@ ril_binder_radio_decode_device_identity(
     GBinderReader* in,
     GByteArray* out)
 {
-    gboolean ok = FALSE;
-    char* imei = gbinder_reader_read_hidl_string(in);
-    char* imeisv = gbinder_reader_read_hidl_string(in);
-    char* esn = gbinder_reader_read_hidl_string(in);
-    char* meid = gbinder_reader_read_hidl_string(in);
+    const char* imei = gbinder_reader_read_hidl_string_c(in);
+    const char* imeisv = gbinder_reader_read_hidl_string_c(in);
+    const char* esn = gbinder_reader_read_hidl_string_c(in);
+    const char* meid = gbinder_reader_read_hidl_string_c(in);
 
     if (imei || imeisv || esn || meid) {
         grilio_encode_int32(out, 4);
@@ -1992,14 +1595,9 @@ ril_binder_radio_decode_device_identity(
         grilio_encode_utf8(out, imeisv);
         grilio_encode_utf8(out, esn);
         grilio_encode_utf8(out, meid);
-        ok = TRUE;
+        return TRUE;
     }
-
-    g_free(imei);
-    g_free(imeisv);
-    g_free(esn);
-    g_free(meid);
-    return ok;
+    return FALSE;
 }
 
 /**
@@ -2015,12 +1613,11 @@ ril_binder_radio_decode_ussd(
     guint32 code;
 
     if (gbinder_reader_read_uint32(in, &code)) {
-        char* msg = gbinder_reader_read_hidl_string(in);
+        const char* msg = gbinder_reader_read_hidl_string_c(in);
 
         grilio_encode_int32(out, 2);
         grilio_encode_format(out, "%u", code);
         grilio_encode_utf8(out, msg);
-        g_free(msg);
         return TRUE;
     }
     return FALSE;
@@ -2138,10 +1735,10 @@ ril_binder_radio_decode_cell_info_gsm(
 
         ril_binder_radio_decode_cell_info_header(out, cell);
         if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = CELL_INVALID_VALUE;
+            mcc = RADIO_CELL_INVALID_VALUE;
         }
         if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = CELL_INVALID_VALUE;
+            mnc = RADIO_CELL_INVALID_VALUE;
         }
         grilio_encode_int32(out, mcc);
         grilio_encode_int32(out, mnc);
@@ -2199,10 +1796,10 @@ ril_binder_radio_decode_cell_info_lte(
 
         ril_binder_radio_decode_cell_info_header(out, cell);
         if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = CELL_INVALID_VALUE;
+            mcc = RADIO_CELL_INVALID_VALUE;
         }
         if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = CELL_INVALID_VALUE;
+            mnc = RADIO_CELL_INVALID_VALUE;
         }
         grilio_encode_int32(out, mcc);
         grilio_encode_int32(out, mnc);
@@ -2235,10 +1832,10 @@ ril_binder_radio_decode_cell_info_wcdma(
 
         ril_binder_radio_decode_cell_info_header(out, cell);
         if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = CELL_INVALID_VALUE;
+            mcc = RADIO_CELL_INVALID_VALUE;
         }
         if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = CELL_INVALID_VALUE;
+            mnc = RADIO_CELL_INVALID_VALUE;
         }
         grilio_encode_int32(out, mcc);
         grilio_encode_int32(out, mnc);
@@ -2267,10 +1864,10 @@ ril_binder_radio_decode_cell_info_tdscdma(
 
         ril_binder_radio_decode_cell_info_header(out, cell);
         if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = CELL_INVALID_VALUE;
+            mcc = RADIO_CELL_INVALID_VALUE;
         }
         if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = CELL_INVALID_VALUE;
+            mnc = RADIO_CELL_INVALID_VALUE;
         }
         grilio_encode_int32(out, mcc);
         grilio_encode_int32(out, mnc);
@@ -2303,19 +1900,19 @@ ril_binder_radio_decode_cell_info_list(
             const RadioCellInfo* cell = cells + i;
 
             switch (cells[i].cellInfoType) {
-            case CELL_INFO_GSM:
+            case RADIO_CELL_INFO_GSM:
                 n += cell->gsm.count;
                 break;
-            case CELL_INFO_CDMA:
+            case RADIO_CELL_INFO_CDMA:
                 n += cell->cdma.count;
                 break;
-            case CELL_INFO_LTE:
+            case RADIO_CELL_INFO_LTE:
                 n += cell->lte.count;
                 break;
-            case CELL_INFO_WCDMA:
+            case RADIO_CELL_INFO_WCDMA:
                 n += cell->wcdma.count;
                 break;
-            case CELL_INFO_TD_SCDMA:
+            case RADIO_CELL_INFO_TD_SCDMA:
                 n += cell->tdscdma.count;
                 break;
             }
@@ -2327,19 +1924,19 @@ ril_binder_radio_decode_cell_info_list(
             const RadioCellInfo* cell = cells + i;
 
             switch (cell->cellInfoType) {
-            case CELL_INFO_GSM:
+            case RADIO_CELL_INFO_GSM:
                 ril_binder_radio_decode_cell_info_gsm(out, cell);
                 break;
-            case CELL_INFO_CDMA:
+            case RADIO_CELL_INFO_CDMA:
                 ril_binder_radio_decode_cell_info_cdma(out, cell);
                 break;
-            case CELL_INFO_LTE:
+            case RADIO_CELL_INFO_LTE:
                 ril_binder_radio_decode_cell_info_lte(out, cell);
                 break;
-            case CELL_INFO_WCDMA:
+            case RADIO_CELL_INFO_WCDMA:
                 ril_binder_radio_decode_cell_info_wcdma(out, cell);
                 break;
-            case CELL_INFO_TD_SCDMA:
+            case RADIO_CELL_INFO_TD_SCDMA:
                 ril_binder_radio_decode_cell_info_tdscdma(out, cell);
                 break;
             }
@@ -2356,526 +1953,526 @@ ril_binder_radio_decode_cell_info_list(
 static const RilBinderRadioCall ril_binder_radio_calls[] = {
     {
         RIL_REQUEST_GET_SIM_STATUS,
-        2, /* getIccCardStatus */
-        1, /* getIccCardStatusResponse */
+        RADIO_REQ_GET_ICC_CARD_STATUS,
+        RADIO_RESP_GET_ICC_CARD_STATUS,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_icc_card_status,
         "getIccCardStatus"
     },{
         RIL_REQUEST_ENTER_SIM_PIN,
-        3, /* supplyIccPinForApp */
-        2, /* supplyIccPinForAppResponse */
+        RADIO_REQ_SUPPLY_ICC_PIN_FOR_APP,
+        RADIO_RESP_SUPPLY_ICC_PIN_FOR_APP,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_int_1,
         "supplyIccPinForApp"
     },{
         RIL_REQUEST_ENTER_SIM_PUK,
-        4, /* supplyIccPukForApp */
-        3, /* supplyIccPukForAppResponse */
+        RADIO_REQ_SUPPLY_ICC_PUK_FOR_APP,
+        RADIO_RESP_SUPPLY_ICC_PUK_FOR_APP,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_int_1,
         "supplyIccPukForApp"
     },{
         RIL_REQUEST_ENTER_SIM_PIN2,
-        5, /* supplyIccPin2ForApp */
-        4, /* supplyIccPin2ForAppResponse */
+        RADIO_REQ_SUPPLY_ICC_PIN2_FOR_APP,
+        RADIO_RESP_SUPPLY_ICC_PIN2_FOR_APP,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_int_1,
         "supplyIccPin2ForApp"
     },{
         RIL_REQUEST_ENTER_SIM_PUK2,
-        6, /* supplyIccPuk2ForApp */
-        5, /* supplyIccPuk2ForAppResponse */
+        RADIO_REQ_SUPPLY_ICC_PUK2_FOR_APP,
+        RADIO_RESP_SUPPLY_ICC_PUK2_FOR_APP,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_int_1,
         "supplyIccPuk2ForApp"
     },{
         RIL_REQUEST_CHANGE_SIM_PIN,
-        7, /* changeIccPinForApp */
-        6, /* changeIccPinForAppResponse */
+        RADIO_REQ_CHANGE_ICC_PIN_FOR_APP,
+        RADIO_RESP_CHANGE_ICC_PIN_FOR_APP,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_int_1,
         "changeIccPinForApp"
     },{
         RIL_REQUEST_CHANGE_SIM_PIN2,
-        8, /* changeIccPin2ForApp */
-        7, /* changeIccPin2ForAppResponse */
+        RADIO_REQ_CHANGE_ICC_PIN2_FOR_APP,
+        RADIO_RESP_CHANGE_ICC_PIN2_FOR_APP,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_int_1,
         "changeIccPin2ForApp"
     },{
         RIL_REQUEST_ENTER_NETWORK_DEPERSONALIZATION,
-        9, /* supplyNetworkDepersonalization */
-        8, /* supplyNetworkDepersonalizationResponse */
+        RADIO_REQ_SUPPLY_NETWORK_DEPERSONALIZATION,
+        RADIO_RESP_SUPPLY_NETWORK_DEPERSONALIZATION,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_int_1,
         "supplyNetworkDepersonalization"
     },{
         RIL_REQUEST_GET_CURRENT_CALLS,
-        10, /* getCurrentCalls */
-        9,  /* getCurrentCallsResponse */
+        RADIO_REQ_GET_CURRENT_CALLS,
+        RADIO_RESP_GET_CURRENT_CALLS,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_call_list,
         "getCurrentCalls"
     },{
         RIL_REQUEST_DIAL,
-        11, /* dial */
-        10, /* dialResponse */
+        RADIO_REQ_DIAL,
+        RADIO_RESP_DIAL,
         ril_binder_radio_encode_dial,
         NULL,
         "dial"
     },{
         RIL_REQUEST_GET_IMSI,
-        12, /* getImsiForApp */
-        11, /* getIMSIForAppResponse */
+        RADIO_REQ_GET_IMSI_FOR_APP,
+        RADIO_RESP_GET_IMSI_FOR_APP,
         ril_binder_radio_encode_strings,
         ril_binder_radio_decode_string,
         "getImsiForApp"
     },{
         RIL_REQUEST_HANGUP,
-        13, /* hangup */
-        12, /* hangupConnectionResponse */
+        RADIO_REQ_HANGUP,
+        RADIO_RESP_HANGUP,
         ril_binder_radio_encode_ints,
         NULL,
         "hangup"
     },{
         RIL_REQUEST_HANGUP_WAITING_OR_BACKGROUND,
-        14, /* hangupWaitingOrBackground */
-        13, /* hangupWaitingOrBackgroundResponse */
+        RADIO_REQ_HANGUP_WAITING_OR_BACKGROUND,
+        RADIO_RESP_HANGUP_WAITING_OR_BACKGROUND,
         ril_binder_radio_encode_serial,
         NULL,
         "hangupWaitingOrBackground"
     },{
         RIL_REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND,
-        15, /* hangupForegroundResumeBackground */
-        14, /* hangupForegroundResumeBackgroundResponse */
+        RADIO_REQ_HANGUP_FOREGROUND_RESUME_BACKGROUND,
+        RADIO_RESP_HANGUP_FOREGROUND_RESUME_BACKGROUND,
         ril_binder_radio_encode_serial,
         NULL,
         "hangupForegroundResumeBackground"
     },{
         RIL_REQUEST_SWITCH_HOLDING_AND_ACTIVE,
-        16, /* switchWaitingOrHoldingAndActive */
-        15, /* switchWaitingOrHoldingAndActiveResponse */
+        RADIO_REQ_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE,
+        RADIO_RESP_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE,
         ril_binder_radio_encode_serial,
         NULL,
         "switchWaitingOrHoldingAndActive"
     },{
         RIL_REQUEST_CONFERENCE,
-        17, /* conference */
-        16, /* conferenceResponse */
+        RADIO_REQ_CONFERENCE,
+        RADIO_RESP_CONFERENCE,
         ril_binder_radio_encode_serial,
         NULL,
         "conference"
     },{
         RIL_REQUEST_UDUB,
-        18, /* rejectCall */
-        17, /* rejectCallResponse */
+        RADIO_REQ_REJECT_CALL,
+        RADIO_RESP_REJECT_CALL,
         ril_binder_radio_encode_serial,
         NULL,
         "rejectCall"
     },{
         RIL_REQUEST_LAST_CALL_FAIL_CAUSE,
-        19, /* getLastCallFailCause */
-        18, /* getLastCallFailCauseResponse */
+        RADIO_REQ_GET_LAST_CALL_FAIL_CAUSE,
+        RADIO_RESP_GET_LAST_CALL_FAIL_CAUSE,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_last_call_fail_cause,
         "getLastCallFailCause"
     },{
         RIL_REQUEST_SIGNAL_STRENGTH,
-        20, /* getSignalStrength */
-        19, /* getSignalStrengthResponse */
+        RADIO_REQ_GET_SIGNAL_STRENGTH,
+        RADIO_RESP_GET_SIGNAL_STRENGTH,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_signal_strength,
         "getSignalStrength"
     },{
         RIL_REQUEST_VOICE_REGISTRATION_STATE,
-        21, /* getVoiceRegistrationState */
-        20, /* getVoiceRegistrationStateResponse */
+        RADIO_REQ_GET_VOICE_REGISTRATION_STATE,
+        RADIO_RESP_GET_VOICE_REGISTRATION_STATE,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_voice_reg_state,
         "getVoiceRegistrationState"
     },{
         RIL_REQUEST_DATA_REGISTRATION_STATE,
-        22, /* getDataRegistrationState */
-        21, /* getDataRegistrationStateResponse */
+        RADIO_REQ_GET_DATA_REGISTRATION_STATE,
+        RADIO_RESP_GET_DATA_REGISTRATION_STATE,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_data_reg_state,
         "getDataRegistrationState"
     },{
         RIL_REQUEST_OPERATOR,
-        23, /* getOperator */
-        22, /* getOperatorResponse */
+        RADIO_REQ_GET_OPERATOR,
+        RADIO_RESP_GET_OPERATOR,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_string_3,
         "getOperator"
     },{
         RIL_REQUEST_RADIO_POWER,
-        24, /* setRadioPower */
-        23, /* setRadioPowerResponse */
+        RADIO_REQ_SET_RADIO_POWER,
+        RADIO_RESP_SET_RADIO_POWER,
         ril_binder_radio_encode_bool,
         NULL,
         "setRadioPower"
     },{
         RIL_REQUEST_DTMF,
-        25, /* sendDtmf */
-        24, /* sendDtmfResponse */
+        RADIO_REQ_SEND_DTMF,
+        RADIO_RESP_SEND_DTMF,
         ril_binder_radio_encode_string,
         NULL,
         "sendDtmf"
     },{
         RIL_REQUEST_SEND_SMS,
-        26, /* sendSms */
-        25, /* sendSmsResponse */
+        RADIO_REQ_SEND_SMS,
+        RADIO_RESP_SEND_SMS,
         ril_binder_radio_encode_gsm_sms_message,
         ril_binder_radio_decode_sms_send_result,
         "sendSms"
     },{
         RIL_REQUEST_SEND_SMS_EXPECT_MORE,
-        27, /* sendSMSExpectMore */
-        26, /* sendSMSExpectMoreResponse */
+        RADIO_REQ_SEND_SMS_EXPECT_MORE,
+        RADIO_RESP_SEND_SMS_EXPECT_MORE,
         ril_binder_radio_encode_gsm_sms_message,
         ril_binder_radio_decode_sms_send_result,
         "sendSMSExpectMore"
     },{
         RIL_REQUEST_SETUP_DATA_CALL,
-        28, /* setupDataCall */
-        27, /* setupDataCallResponse */
+        RADIO_REQ_SETUP_DATA_CALL,
+        RADIO_RESP_SETUP_DATA_CALL,
         ril_binder_radio_encode_setup_data_call,
         ril_binder_radio_decode_setup_data_call_result,
         "setupDataCall"
     },{
         RIL_REQUEST_SIM_IO,
-        29, /* iccIOForApp */
-        28, /* iccIOForAppResponse */
+        RADIO_REQ_ICC_IO_FOR_APP,
+        RADIO_RESP_ICC_IO_FOR_APP,
         ril_binder_radio_encode_icc_io,
         ril_binder_radio_decode_icc_result,
         "iccIOForApp"
     },{
         RIL_REQUEST_SEND_USSD,
-        30, /* sendUssd */
-        29, /* sendUssdResponse */
+        RADIO_REQ_SEND_USSD,
+        RADIO_RESP_SEND_USSD,
         ril_binder_radio_encode_string,
         NULL,
         "sendUssd"
     },{
         RIL_REQUEST_CANCEL_USSD,
-        31, /* cancelPendingUssd */
-        30, /* cancelPendingUssdResponse */
+        RADIO_REQ_CANCEL_PENDING_USSD,
+        RADIO_RESP_CANCEL_PENDING_USSD,
         ril_binder_radio_encode_serial,
         NULL,
         "cancelPendingUssd"
     },{
         RIL_REQUEST_GET_CLIR,
-        32, /* getClir */
-        31, /* getClirResponse */
+        RADIO_REQ_GET_CLIR,
+        RADIO_RESP_GET_CLIR,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_int_2,
         "getClir"
     },{
         RIL_REQUEST_SET_CLIR,
-        33, /* setClir */
-        32, /* setClirResponse */
+        RADIO_REQ_SET_CLIR,
+        RADIO_RESP_SET_CLIR,
         ril_binder_radio_encode_ints,
         NULL,
         "setClir"
     },{
         RIL_REQUEST_QUERY_CALL_FORWARD_STATUS,
-        34, /* getCallForwardStatus */
-        33, /* getCallForwardStatusResponse */
+        RADIO_REQ_GET_CALL_FORWARD_STATUS,
+        RADIO_RESP_GET_CALL_FORWARD_STATUS,
         ril_binder_radio_encode_call_forward_info,
         ril_binder_radio_decode_call_forward_info_array,
         "getCallForwardStatus"
     },{
         RIL_REQUEST_SET_CALL_FORWARD,
-        35, /* setCallForward */
-        34, /* setCallForwardResponse */
+        RADIO_REQ_SET_CALL_FORWARD,
+        RADIO_RESP_SET_CALL_FORWARD,
         ril_binder_radio_encode_call_forward_info,
         NULL,
         "setCallForward"
     },{
         RIL_REQUEST_QUERY_CALL_WAITING,
-        36, /* getCallWaiting */
-        35, /* getCallWaitingResponse */
+        RADIO_REQ_GET_CALL_WAITING,
+        RADIO_RESP_GET_CALL_WAITING,
         ril_binder_radio_encode_ints,
         ril_binder_radio_decode_call_waiting,
         "getCallWaiting"
     },{
         RIL_REQUEST_SET_CALL_WAITING,
-        37, /* setCallWaiting */
-        36, /* setCallWaitingResponse */
+        RADIO_REQ_SET_CALL_WAITING,
+        RADIO_RESP_SET_CALL_WAITING,
         ril_binder_radio_encode_ints_to_bool_int,
         NULL,
         "setCallWaiting"
     },{
         RIL_REQUEST_SMS_ACKNOWLEDGE,
-        38, /* acknowledgeLastIncomingGsmSms */
-        37, /* acknowledgeLastIncomingGsmSmsResponse */
+        RADIO_REQ_ACKNOWLEDGE_LAST_INCOMING_GSM_SMS,
+        RADIO_RESP_ACKNOWLEDGE_LAST_INCOMING_GSM_SMS,
         ril_binder_radio_encode_ints_to_bool_int,
         NULL,
         "acknowledgeLastIncomingGsmSms"
     },{
         RIL_REQUEST_ANSWER,
-        39, /* acceptCall */
-        38, /* acceptCallResponse */
+        RADIO_REQ_ACCEPT_CALL,
+        RADIO_RESP_ACCEPT_CALL,
         ril_binder_radio_encode_serial,
         NULL,
         "acceptCall"
     },{
         RIL_REQUEST_DEACTIVATE_DATA_CALL,
-        40, /* deactivateDataCall */
-        39, /* deactivateDataCallResponse */
+        RADIO_REQ_DEACTIVATE_DATA_CALL,
+        RADIO_RESP_DEACTIVATE_DATA_CALL,
         ril_binder_radio_encode_deactivate_data_call,
         NULL,
         "deactivateDataCall"
     },{
         RIL_REQUEST_QUERY_FACILITY_LOCK,
-        41, /* getFacilityLockForApp */
-        40, /* getFacilityLockForAppResponse */
+        RADIO_REQ_GET_FACILITY_LOCK_FOR_APP,
+        RADIO_RESP_GET_FACILITY_LOCK_FOR_APP,
         ril_binder_radio_encode_get_facility_lock,
         ril_binder_radio_decode_int32,
         "getFacilityLockForApp"
     },{
         RIL_REQUEST_SET_FACILITY_LOCK,
-        42, /* setFacilityLockForApp */
-        41, /* setFacilityLockForAppResponse */
+        RADIO_REQ_SET_FACILITY_LOCK_FOR_APP,
+        RADIO_RESP_SET_FACILITY_LOCK_FOR_APP,
         ril_binder_radio_encode_set_facility_lock,
         ril_binder_radio_decode_int_1,
         "setFacilityLockForApp"
     },{
         RIL_REQUEST_CHANGE_BARRING_PASSWORD,
-        43, /* setBarringPassword */
-        42, /* setBarringPasswordResponse */
+        RADIO_REQ_SET_BARRING_PASSWORD,
+        RADIO_RESP_SET_BARRING_PASSWORD,
         ril_binder_radio_encode_strings,
         NULL,
         "setBarringPassword"
     },{
         RIL_REQUEST_QUERY_NETWORK_SELECTION_MODE,
-        44, /* getNetworkSelectionMode */
-        43, /* getNetworkSelectionModeResponse */
+        RADIO_REQ_GET_NETWORK_SELECTION_MODE,
+        RADIO_RESP_GET_NETWORK_SELECTION_MODE,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_bool_to_int_array,
         "getNetworkSelectionMode"
     },{
         RIL_REQUEST_SET_NETWORK_SELECTION_AUTOMATIC,
-        45, /* setNetworkSelectionModeAutomatic */
-        44, /* setNetworkSelectionModeAutomaticResponse */
+        RADIO_REQ_SET_NETWORK_SELECTION_MODE_AUTOMATIC,
+        RADIO_RESP_SET_NETWORK_SELECTION_MODE_AUTOMATIC,
         ril_binder_radio_encode_serial,
         NULL,
         "setNetworkSelectionModeAutomatic"
     },{
         RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL,
-        46, /* setNetworkSelectionModeManual */
-        45, /* setNetworkSelectionModeManualResponse */
+        RADIO_REQ_SET_NETWORK_SELECTION_MODE_MANUAL,
+        RADIO_RESP_SET_NETWORK_SELECTION_MODE_MANUAL,
         ril_binder_radio_encode_serial,
         NULL,
         "setNetworkSelectionModeManual"
     },{
         RIL_REQUEST_QUERY_AVAILABLE_NETWORKS,
-        47, /* getAvailableNetworks */
-        46, /* getAvailableNetworksResponse */
+        RADIO_REQ_GET_AVAILABLE_NETWORKS,
+        RADIO_RESP_GET_AVAILABLE_NETWORKS,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_operator_info_list,
         "getAvailableNetworks"
     },{
         RIL_REQUEST_BASEBAND_VERSION,
-        50, /* getBasebandVersion */
-        49, /* getBasebandVersionResponse */
+        RADIO_REQ_GET_BASEBAND_VERSION,
+        RADIO_RESP_GET_BASEBAND_VERSION,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_string,
         "getBasebandVersion"
     },{
         RIL_REQUEST_SEPARATE_CONNECTION,
-        51, /* separateConnection */
-        50, /* separateConnectionResponse */
+        RADIO_REQ_SEPARATE_CONNECTION,
+        RADIO_RESP_SEPARATE_CONNECTION,
         ril_binder_radio_encode_ints,
         NULL,
         "separateConnection"
     },{
         RIL_REQUEST_SET_MUTE,
-        52, /* setMute */
-        51, /* setMuteResponse */
+        RADIO_REQ_SET_MUTE,
+        RADIO_RESP_SET_MUTE,
         ril_binder_radio_encode_bool,
         NULL,
         "setMute"
     },{
         RIL_REQUEST_GET_MUTE,
-        53, /* getMute */
-        52, /* getMuteResponse */
+        RADIO_REQ_GET_MUTE,
+        RADIO_RESP_GET_MUTE,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_bool_to_int_array,
         "getMute"
     },{
         RIL_REQUEST_QUERY_CLIP,
-        54, /* getClip */
-        53, /* getClipResponse */
+        RADIO_REQ_GET_CLIP,
+        RADIO_RESP_GET_CLIP,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_int_1,
         "getClip"
     },{
         RIL_REQUEST_DATA_CALL_LIST,
-        55, /* getDataCallList */
-        54, /* getDataCallListResponse */
+        RADIO_REQ_GET_DATA_CALL_LIST,
+        RADIO_RESP_GET_DATA_CALL_LIST,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_data_call_list,
         "getDataCallList"
     },{
         RIL_REQUEST_SET_SUPP_SVC_NOTIFICATION,
-        56, /* setSuppServiceNotifications */
-        55, /* setSuppServiceNotificationsResponse */
+        RADIO_REQ_SET_SUPP_SERVICE_NOTIFICATIONS,
+        RADIO_RESP_SET_SUPP_SERVICE_NOTIFICATIONS,
         ril_binder_radio_encode_int,
         NULL,
         "setSuppServiceNotifications"
     },{
         RIL_REQUEST_WRITE_SMS_TO_SIM,
-        57, /* writeSmsToSim */
-        56, /* writeSmsToSimResponse */
+        RADIO_REQ_WRITE_SMS_TO_SIM,
+        RADIO_RESP_WRITE_SMS_TO_SIM,
         ril_binder_radio_encode_sms_write_args,
         ril_binder_radio_decode_int_1,
         "writeSmsToSim"
     },{
         RIL_REQUEST_DELETE_SMS_ON_SIM,
-        58, /* deleteSmsOnSim */
-        57, /* deleteSmsOnSimResponse */
+        RADIO_REQ_DELETE_SMS_ON_SIM,
+        RADIO_RESP_DELETE_SMS_ON_SIM,
         ril_binder_radio_encode_ints,
         NULL,
         "deleteSmsOnSim"
     },{
         RIL_REQUEST_QUERY_AVAILABLE_BAND_MODE,
-        60, /* getAvailableBandModes */
-        59, /* getAvailableBandModesResponse */
+        RADIO_REQ_GET_AVAILABLE_BAND_MODES,
+        RADIO_RESP_GET_AVAILABLE_BAND_MODES,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_int_array,
         "getAvailableBandModes"
     },{
         RIL_REQUEST_STK_SEND_ENVELOPE_COMMAND,
-        61, /* sendEnvelope */
-        60, /* sendEnvelopeResponse */
+        RADIO_REQ_SEND_ENVELOPE,
+        RADIO_RESP_SEND_ENVELOPE,
         ril_binder_radio_encode_string,
         ril_binder_radio_decode_string,
         "sendEnvelope"
     },{
         RIL_REQUEST_STK_SEND_TERMINAL_RESPONSE,
-        62, /* sendTerminalResponseToSim */
-        61, /* sendTerminalResponseToSimResponse */
+        RADIO_REQ_SEND_TERMINAL_RESPONSE_TO_SIM,
+        RADIO_RESP_SEND_TERMINAL_RESPONSE_TO_SIM,
         ril_binder_radio_encode_string,
         NULL,
         "sendTerminalResponseToSim"
     },{
         RIL_REQUEST_STK_HANDLE_CALL_SETUP_REQUESTED_FROM_SIM,
-        63, /* handleStkCallSetupRequestFromSim */
-        62, /* handleStkCallSetupRequestFromSimResponse */
+        RADIO_REQ_HANDLE_STK_CALL_SETUP_REQUEST_FROM_SIM,
+        RADIO_RESP_HANDLE_STK_CALL_SETUP_REQUEST_FROM_SIM,
         ril_binder_radio_encode_bool,
         NULL,
         "handleStkCallSetupRequestFromSim"
     },{
         RIL_REQUEST_EXPLICIT_CALL_TRANSFER,
-        64, /* explicitCallTransfer */
-        63, /* explicitCallTransferResponse */
+        RADIO_REQ_EXPLICIT_CALL_TRANSFER,
+        RADIO_RESP_EXPLICIT_CALL_TRANSFER,
         ril_binder_radio_encode_serial,
         NULL,
         "explicitCallTransfer"
     },{
         RIL_REQUEST_SET_PREFERRED_NETWORK_TYPE,
-        65, /* setPreferredNetworkType */
-        64, /* setPreferredNetworkTypeResponse */
+        RADIO_REQ_SET_PREFERRED_NETWORK_TYPE,
+        RADIO_RESP_SET_PREFERRED_NETWORK_TYPE,
         ril_binder_radio_encode_ints,
         NULL,
         "setPreferredNetworkType"
     },{
         RIL_REQUEST_GET_PREFERRED_NETWORK_TYPE,
-        66, /* getPreferredNetworkType */
-        65, /* getPreferredNetworkTypeResponse */
+        RADIO_REQ_GET_PREFERRED_NETWORK_TYPE,
+        RADIO_RESP_GET_PREFERRED_NETWORK_TYPE,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_pref_network_type,
         "getPreferredNetworkType"
     },{
         RIL_REQUEST_SCREEN_STATE, /* deprecated on 2017-01-10 */
-        68, /* setLocationUpdates */
-        67, /* setLocationUpdatesResponse */
+        RADIO_REQ_SET_LOCATION_UPDATES,
+        RADIO_RESP_SET_LOCATION_UPDATES,
         ril_binder_radio_encode_bool,
         NULL,
         "setLocationUpdates"
     },{
         RIL_REQUEST_SET_LOCATION_UPDATES,
-        68, /* setLocationUpdates */
-        67, /* setLocationUpdatesResponse */
+        RADIO_REQ_SET_LOCATION_UPDATES,
+        RADIO_RESP_SET_LOCATION_UPDATES,
         ril_binder_radio_encode_bool,
         NULL,
         "setLocationUpdates"
     },{
         RIL_REQUEST_GSM_GET_BROADCAST_SMS_CONFIG,
-        80, /* getGsmBroadcastConfig */
-        79, /* getGsmBroadcastConfigResponse */
+        RADIO_REQ_GET_GSM_BROADCAST_CONFIG,
+        RADIO_RESP_GET_GSM_BROADCAST_CONFIG,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_gsm_broadcast_sms_config,
         "getGsmBroadcastConfig"
     },{
         RIL_REQUEST_GSM_SET_BROADCAST_SMS_CONFIG,
-        81, /* setGsmBroadcastConfig */
-        80, /* setGsmBroadcastConfigResponse */
+        RADIO_REQ_SET_GSM_BROADCAST_CONFIG,
+        RADIO_RESP_SET_GSM_BROADCAST_CONFIG,
         ril_binder_radio_encode_gsm_broadcast_sms_config,
         NULL,
         "setGsmBroadcastConfig"
     },{
         RIL_REQUEST_DEVICE_IDENTITY,
-        89, /* getDeviceIdentity */
-        88, /* getDeviceIdentityResponse */
+        RADIO_REQ_GET_DEVICE_IDENTITY,
+        RADIO_RESP_GET_DEVICE_IDENTITY,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_device_identity,
         "getDeviceIdentity"
     },{
         RIL_REQUEST_GET_SMSC_ADDRESS,
-        91, /* getSmscAddress */
-        90, /* getSmscAddressResponse */
+        RADIO_REQ_GET_SMSC_ADDRESS,
+        RADIO_RESP_GET_SMSC_ADDRESS,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_string,
         "getSmscAddress"
     },{
         RIL_REQUEST_SET_SMSC_ADDRESS,
-        92, /* setSmscAddress */
-        91, /* setSmscAddressResponse */
+        RADIO_REQ_SET_SMSC_ADDRESS,
+        RADIO_RESP_SET_SMSC_ADDRESS,
         ril_binder_radio_encode_string,
         NULL,
         "setSmscAddress"
     },{
         RIL_REQUEST_REPORT_STK_SERVICE_IS_RUNNING,
-        94, /* reportStkServiceIsRunning */
-        93, /* reportStkServiceIsRunningResponse */
+        RADIO_REQ_REPORT_STK_SERVICE_IS_RUNNING,
+        RADIO_RESP_REPORT_STK_SERVICE_IS_RUNNING,
         ril_binder_radio_encode_serial,
         NULL,
         "reportStkServiceIsRunning"
     },{
         RIL_REQUEST_GET_CELL_INFO_LIST,
-        100, /* getCellInfoList */
-        99, /* getCellInfoListResponse */
+        RADIO_REQ_GET_CELL_INFO_LIST,
+        RADIO_RESP_GET_CELL_INFO_LIST,
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_cell_info_list,
         "getCellInfoList"
     },{
         RIL_REQUEST_SET_UNSOL_CELL_INFO_LIST_RATE,
-        101, /* setCellInfoListRate */
-        100, /* setCellInfoListRateResponse */
+        RADIO_REQ_SET_CELL_INFO_LIST_RATE,
+        RADIO_RESP_SET_CELL_INFO_LIST_RATE,
         ril_binder_radio_encode_ints,
         NULL,
         "setCellInfoListRate"
     },{
         RIL_REQUEST_SET_UICC_SUBSCRIPTION,
-        113, /* setUiccSubscription */
-        112, /* setUiccSubscriptionResponse */
+        RADIO_REQ_SET_UICC_SUBSCRIPTION,
+        RADIO_RESP_SET_UICC_SUBSCRIPTION,
         ril_binder_radio_encode_uicc_sub,
         NULL,
         "setUiccSubscription"
     },{
         RIL_REQUEST_ALLOW_DATA,
-        114, /* setDataAllowed */
-        113, /* setDataAllowedResponse */
+        RADIO_REQ_SET_DATA_ALLOWED,
+        RADIO_RESP_SET_DATA_ALLOWED,
         ril_binder_radio_encode_bool,
         NULL,
         "setDataAllowed"
     },{
         RIL_RESPONSE_ACKNOWLEDGEMENT,
         RADIO_REQ_RESPONSE_ACKNOWLEDGEMENT,
-        0,
+        RADIO_RESP_NONE,
         NULL,
         NULL,
         "responseAcknowledgement"
@@ -2889,102 +2486,102 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
 static const RilBinderRadioEvent ril_binder_radio_events[] = {
     {
         RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED,
-        1,/* radioStateChanged */
+        RADIO_IND_RADIO_STATE_CHANGED,
         ril_binder_radio_decode_int32,
         "radioStateChanged"
     },{
         RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED,
-        2, /* callStateChanged */
+        RADIO_IND_CALL_STATE_CHANGED,
         NULL,
         "callStateChanged"
     },{
         RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED,
-        3, /* networkStateChanged */
+        RADIO_IND_NETWORK_STATE_CHANGED,
         NULL,
         "networkStateChanged"
     },{
         RIL_UNSOL_RESPONSE_NEW_SMS,
-        4, /* newSms */
+        RADIO_IND_NEW_SMS,
         ril_binder_radio_decode_byte_array_to_hex,
         "newSms"
     },{
         RIL_UNSOL_ON_USSD,
-        7, /* onUssd */
+        RADIO_IND_ON_USSD,
         ril_binder_radio_decode_ussd,
         "onUssd"
     },{
         RIL_UNSOL_NITZ_TIME_RECEIVED,
-        8, /* nitzTimeReceived */
+        RADIO_IND_NITZ_TIME_RECEIVED,
         ril_binder_radio_decode_string,
         "nitzTimeReceived"
     },{
         RIL_UNSOL_SIGNAL_STRENGTH,
-        9, /* currentSignalStrength */
+        RADIO_IND_CURRENT_SIGNAL_STRENGTH,
         ril_binder_radio_decode_signal_strength,
         "currentSignalStrength"
     },{
         RIL_UNSOL_DATA_CALL_LIST_CHANGED,
-        10, /* dataCallListChanged */
+        RADIO_IND_DATA_CALL_LIST_CHANGED,
         ril_binder_radio_decode_data_call_list,
         "dataCallListChanged"
     },{
         RIL_UNSOL_SUPP_SVC_NOTIFICATION,
-        11, /* suppSvcNotify */
+        RADIO_IND_SUPP_SVC_NOTIFY,
         ril_binder_radio_decode_supp_svc_notification,
         "suppSvcNotify"
     },{
         RIL_UNSOL_STK_SESSION_END,
-        12, /* stkSessionEnd */
+        RADIO_IND_STK_SESSION_END,
         NULL,
         "stkSessionEnd"
     },{
         RIL_UNSOL_STK_PROACTIVE_COMMAND,
-        13, /* stkProactiveCommand */
+        RADIO_IND_STK_PROACTIVE_COMMAND,
         ril_binder_radio_decode_string,
         "stkProactiveCommand"
     },{
         RIL_UNSOL_STK_EVENT_NOTIFY,
-        14, /* stkEventNotify */
+        RADIO_IND_STK_EVENT_NOTIFY,
         ril_binder_radio_decode_string,
         "stkEventNotify"
     },{
         RIL_UNSOL_SIM_REFRESH,
-        17, /* simRefresh */
+        RADIO_IND_SIM_REFRESH,
         ril_binder_radio_decode_sim_refresh,
         "simRefresh"
     },{
         RIL_UNSOL_CALL_RING,
-        18, /* callRing */
+        RADIO_IND_CALL_RING,
         NULL, /* No parameters for GSM calls */
         "callRing"
     },{
         RIL_UNSOL_RESPONSE_SIM_STATUS_CHANGED,
-        19, /* simStatusChanged */
+        RADIO_IND_SIM_STATUS_CHANGED,
         NULL,
         "simStatusChanged"
     },{
         RIL_UNSOL_RESPONSE_NEW_BROADCAST_SMS,
-        21, /* newBroadcastSms */
+        RADIO_IND_NEW_BROADCAST_SMS,
         ril_binder_radio_decode_byte_array,
         "newBroadcastSms"
     },{
         RIL_UNSOL_RINGBACK_TONE,
-        28, /* indicateRingbackTone */
+        RADIO_IND_INDICATE_RINGBACK_TONE,
         ril_binder_radio_decode_bool_to_int_array,
         "indicateRingbackTone"
     },{
         RIL_UNSOL_VOICE_RADIO_TECH_CHANGED,
-        34, /* voiceRadioTechChanged */
+        RADIO_IND_VOICE_RADIO_TECH_CHANGED,
         ril_binder_radio_decode_int32,
         "voiceRadioTechChanged"
     },{
         RIL_UNSOL_CELL_INFO_LIST,
-        35, /* cellInfoList */
+        RADIO_IND_CELL_INFO_LIST,
         ril_binder_radio_decode_cell_info_list,
         "cellInfoList"
     },{
         RIL_UNSOL_UICC_SUBSCRIPTION_STATUS_CHANGED,
-        37, /* subscriptionStatusChanged */
+        RADIO_IND_SUBSCRIPTION_STATUS_CHANGED,
         ril_binder_radio_decode_bool_to_int_array,
         "subscriptionStatusChanged"
     }
@@ -3022,7 +2619,7 @@ ril_binder_radio_generic_failure(
     RilBinderRadio* self,
     GRilIoRequest* req)
 {
-    if (self->remote) {
+    if (self->radio) {
         RilBinderRadioFailureData* failure =
             g_slice_new(RilBinderRadioFailureData);
 
@@ -3045,28 +2642,19 @@ void
 ril_binder_radio_drop_radio(
     RilBinderRadio* self)
 {
-    if (self->indication) {
-        gbinder_local_object_drop(self->indication);
-        self->indication = NULL;
-    }
-    if (self->response) {
-        gbinder_local_object_drop(self->response);
-        self->response = NULL;
-    }
-    if (self->remote) {
-        gbinder_remote_object_remove_handler(self->remote, self->death_id);
-        gbinder_remote_object_unref(self->remote);
-        self->death_id = 0;
-        self->remote = NULL;
+    if (self->radio) {
+        radio_instance_remove_all_handlers(self->radio, self->radio_event_id);
+        radio_instance_unref(self->radio);
+        self->radio = NULL;
     }
 }
 
 static
 gboolean
-ril_binder_radio_handle_indication(
+ril_binder_radio_handle_known_indication(
     RilBinderRadio* self,
     const RilBinderRadioEvent* event,
-    RadioIndicationType ind_type,
+    RADIO_IND_TYPE ind_type,
     GBinderReader* reader)
 {
     GByteArray* buf = self->buf;
@@ -3079,10 +2667,10 @@ ril_binder_radio_handle_indication(
         buf = g_byte_array_new();
     }
 
-    /* Decode the response */
+    /* Decode the event */
     g_byte_array_set_size(buf, 0);
     if (!event->decode || event->decode(reader, buf)) {
-        GRILIO_INDICATION_TYPE type = (ind_type == IND_ACK_EXP) ?
+        GRILIO_INDICATION_TYPE type = (ind_type == RADIO_IND_ACK_EXP) ?
             GRILIO_INDICATION_UNSOLICITED_ACK_EXP :
             GRILIO_INDICATION_UNSOLICITED;
 
@@ -3115,74 +2703,36 @@ ril_binder_radio_connected(
 }
 
 static
-GBinderLocalReply*
-ril_binder_radio_indication(
-    GBinderLocalObject* obj,
-    GBinderRemoteRequest* req,
-    guint code,
-    guint flags,
-    int* status,
-    void* user_data)
+gboolean
+ril_binder_radio_indication_handler(
+    RadioInstance* radio,
+    RADIO_IND code,
+    RADIO_IND_TYPE type,
+    const GBinderReader* args,
+    gpointer user_data)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
-    const char* iface = gbinder_remote_request_interface(req);
 
-    if (!g_strcmp0(iface, RADIO_INDICATION)) {
-        GBinderReader reader;
-        guint type;
-
-        /* All these should be one-way */
-        GASSERT(flags & GBINDER_TX_FLAG_ONEWAY);
-        gbinder_remote_request_init_reader(req, &reader);
-        if (gbinder_reader_read_uint32(&reader, &type) &&
-            (type == IND_UNSOLICITED || type == IND_ACK_EXP)) {
-            gboolean signaled = FALSE;
-            const RilBinderRadioEvent* event =
-                g_hash_table_lookup(self->unsol_map, GINT_TO_POINTER(code));
-
-            /* CONNECTED indication is slightly special */
-            if (code == RADIO_IND_RIL_CONNECTED) {
-                DBG_(self, RADIO_INDICATION " %u rilConnected", code);
-                if (event) {
-                    signaled = ril_binder_radio_handle_indication(self,
-                        event, type, &reader);
-                }
-                ril_binder_radio_connected(self);
-            } else if (event) {
-                DBG_(self, RADIO_INDICATION " %u %s", code, event->name);
-                signaled = ril_binder_radio_handle_indication(self,
-                    event, type, &reader);
-            } else {
-                DBG_(self, RADIO_INDICATION " %u", code);
-            }
-            if (type == IND_ACK_EXP && !signaled) {
-                DBG_(self, "ack");
-                ril_binder_radio_ack(self);
-            }
-        } else {
-            DBG_(self, RADIO_INDICATION " %u", code);
-            ofono_warn("Failed to decode indication %u", code);
-        }
-        *status = GBINDER_STATUS_OK;
+    /* CONNECTED indication is slightly special */
+    if (code == RADIO_IND_RIL_CONNECTED) {
+        DBG_(self, "IRadioIndication %u rilConnected", code);
+        ril_binder_radio_connected(self);
+        return TRUE;
     } else {
-        DBG_(self, "%s %u", iface, code);
-        *status = GBINDER_STATUS_FAILED;
-    }
-    return NULL;
-}
+        const RilBinderRadioEvent* event = g_hash_table_lookup(self->unsol_map,
+            GINT_TO_POINTER(code));
 
-static
-void
-ril_binder_radio_handle_ack(
-    RilBinderRadio* self,
-    GBinderRemoteRequest* req)
-{
-    gint32 serial;
+        if (event) {
+            GBinderReader reader;
 
-    /* oneway acknowledgeRequest(int32_t serial) */
-    if (gbinder_remote_request_read_int32(req, &serial)) {
-        grilio_transport_signal_response(&self->parent,
-            GRILIO_RESPONSE_SOLICITED_ACK, serial, RIL_E_SUCCESS, NULL, 0);
+            gbinder_reader_copy(&reader, args);
+            DBG_(self, "IRadioIndication %u %s", code, event->name);
+            return ril_binder_radio_handle_known_indication(self, event,
+                type, &reader);
+        } else {
+            DBG_(self, "IRadioIndication %u", code);
+            return FALSE;
+        }
     }
 }
 
@@ -3215,13 +2765,13 @@ ril_binder_radio_handle_known_response(
             DBG_(self, "Unexpected response type %u", info->type);
             type = GRILIO_RESPONSE_NONE;
             break;
-        case RESP_SOLICITED:
+        case RADIO_RESP_SOLICITED:
             type = GRILIO_RESPONSE_SOLICITED;
             break;
-        case RESP_SOLICITED_ACK:
+        case RADIO_RESP_SOLICITED_ACK:
             type = GRILIO_RESPONSE_SOLICITED_ACK;
             break;
-        case RESP_SOLICITED_ACK_EXP:
+        case RADIO_RESP_SOLICITED_ACK_EXP:
             type = GRILIO_RESPONSE_SOLICITED_ACK_EXP;
             break;
         }
@@ -3244,83 +2794,51 @@ ril_binder_radio_handle_known_response(
 }
 
 static
-void
-ril_binder_radio_handle_response(
-    RilBinderRadio* self,
-    GBinderRemoteRequest* req,
-    guint code)
+gboolean
+ril_binder_radio_response_handler(
+    RadioInstance* radio,
+    RADIO_RESP code,
+    const RadioResponseInfo* info,
+    const GBinderReader* args,
+    gpointer user_data)
 {
-    GBinderReader reader;
-    GBinderBuffer* buf;
+    RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
+    const RilBinderRadioCall* call = g_hash_table_lookup(self->resp_map,
+        GINT_TO_POINTER(code));
 
-    /*
-     * We assume that all responses must start with RadioResponseInfo.
-     * One exception is acknowledgeRequest which is handled separately.
-     */
-    gbinder_remote_request_init_reader(req, &reader);
-    buf = gbinder_reader_read_buffer(&reader);
-    GASSERT(buf && buf->size == sizeof(RadioResponseInfo));
-    if (buf && buf->size == sizeof(RadioResponseInfo)) {
-        gboolean signaled = FALSE;
-        const RadioResponseInfo* info = buf->data;
-        const RilBinderRadioCall* call = g_hash_table_lookup(self->resp_map,
-            GINT_TO_POINTER(code));
+    if (call) {
+        GBinderReader reader;
 
-        if (call) {
-            /* This is a known response */
-            DBG_(self, RADIO_RESPONSE " %u %s", code, call->name);
-            signaled = ril_binder_radio_handle_known_response(self, call, info,
-                &reader);
-        } else {
-            DBG_(self, RADIO_RESPONSE " %u", code);
-            ofono_warn("Unexpected response transaction %u", code);
-        }
-        if (info->type == RESP_SOLICITED_ACK_EXP && !signaled) {
-            DBG_(self, "ack");
-            ril_binder_radio_ack(self);
-        }
+        /* This is a known response */
+        gbinder_reader_copy(&reader, args);
+        DBG_(self, "IRadioResponse %u %s", code, call->name);
+        return ril_binder_radio_handle_known_response(self, call, info,
+            &reader);
     } else {
-        DBG_(self, RADIO_RESPONSE " %u", code);
+        DBG_(self, "IRadioResponse %u", code);
+        ofono_warn("Unexpected response transaction %u", code);
+        return FALSE;
     }
-    gbinder_buffer_free(buf);
 }
 
 static
-GBinderLocalReply*
-ril_binder_radio_response(
-    GBinderLocalObject* obj,
-    GBinderRemoteRequest* req,
-    guint code,
-    guint flags,
-    int* status,
-    void* user_data)
+void
+ril_binder_radio_ack_handler(
+    RadioInstance* radio,
+    guint32 serial,
+    gpointer user_data)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
-    const char* iface = gbinder_remote_request_interface(req);
 
-    if (!g_strcmp0(iface, RADIO_RESPONSE)) {
-        /* All these should be one-way transactions */
-        GASSERT(flags & GBINDER_TX_FLAG_ONEWAY);
-        if (code == RADIO_RESP_ACKNOWLEDGE_REQUEST) {
-            /* acknowledgeRequest has no RadioResponseInfo */
-            DBG_(self, RADIO_RESPONSE " %u acknowledgeRequest", code);
-            ril_binder_radio_handle_ack(self, req);
-        } else {
-            /* All other responses have it */
-            ril_binder_radio_handle_response(self, req, code);
-        }
-        *status = GBINDER_STATUS_OK;
-    } else {
-        DBG_(self, "%s %u", iface, code);
-        *status = GBINDER_STATUS_FAILED;
-    }
-    return NULL;
+    DBG_(self, "IRadioResponse acknowledgeRequest");
+    grilio_transport_signal_response(&self->parent,
+        GRILIO_RESPONSE_SOLICITED_ACK, serial, RIL_E_SUCCESS, NULL, 0);
 }
 
 static
 void
 ril_binder_radio_radio_died(
-    GBinderRemoteObject* obj,
+    RadioInstance* radio,
     void* user_data)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
@@ -3348,14 +2866,12 @@ ril_binder_radio_send(
 
     if (call) {
         /* This is a known request */
-        GBinderLocalRequest* txreq = gbinder_client_new_request(self->client);
+        GBinderLocalRequest* txreq = radio_instance_new_request(self->radio,
+            call->req_tx);
 
         if (!call->encode || call->encode(req, txreq)) {
-            /* All requests are one-way */
-            const int status = gbinder_client_transact_sync_oneway(self->client,
-                call->req_tx, txreq);
-
-            if (status >= 0) {
+            if (radio_instance_send_request_sync(self->radio, call->req_tx,
+                txreq)) {
                 /* Transaction succeeded */
                 gbinder_local_request_unref(txreq);
                 return GRILIO_SEND_OK;
@@ -3379,7 +2895,7 @@ ril_binder_radio_shutdown(
     gboolean flush)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(transport);
-    const gboolean was_connected = (self->remote != NULL);
+    const gboolean was_connected = (self->radio != NULL);
 
     ril_binder_radio_drop_radio(self);
     if (was_connected) {
@@ -3391,15 +2907,6 @@ ril_binder_radio_shutdown(
  * API
  *==========================================================================*/
 
-void
-ril_binder_radio_ack(
-    RilBinderRadio* self)
-{
-    /* Internal ack */
-    gbinder_client_transact_sync_oneway(self->client,
-        RADIO_REQ_RESPONSE_ACKNOWLEDGEMENT, NULL);
-}
-
 GRilIoTransport*
 ril_binder_radio_new(
     const char* dev,
@@ -3408,43 +2915,25 @@ ril_binder_radio_new(
     RilBinderRadio* self = g_object_new(RIL_TYPE_BINDER_RADIO, NULL);
     GRilIoTransport* transport = &self->parent;
 
-    self->sm = gbinder_servicemanager_new(dev);
-    if (self->sm) {
-        int status = 0;
-        GBinderLocalRequest* req;
-        GBinderRemoteReply* reply;
-
-        /* Fetch remote reference from hwservicemanager */
-        self->fqname = g_strconcat(RADIO_REMOTE "/", name, NULL);
-        self->remote = gbinder_servicemanager_get_service_sync(self->sm,
-            self->fqname, &status);
-        if (self->remote) {
-            DBG_(self, "Connected to %s", self->fqname);
-            /* get_service returns auto-released reference,
-             * we need to add a reference of our own */
-            gbinder_remote_object_ref(self->remote);
-            self->client = gbinder_client_new(self->remote, RADIO_REMOTE);
-            self->death_id = gbinder_remote_object_add_death_handler
-                (self->remote, ril_binder_radio_radio_died, self);
-            self->indication = gbinder_servicemanager_new_local_object
-                (self->sm, RADIO_INDICATION, ril_binder_radio_indication, self);
-            self->response = gbinder_servicemanager_new_local_object
-                (self->sm, RADIO_RESPONSE, ril_binder_radio_response, self);
-
-            /* IRadio::setResponseFunctions */
-            req = gbinder_client_new_request(self->client);
-            gbinder_local_request_append_local_object(req, self->response);
-            gbinder_local_request_append_local_object(req, self->indication);
-            reply = gbinder_client_transact_sync_reply(self->client,
-                RADIO_REQ_SET_RESPONSE_FUNCTIONS, req, &status);
-            DBG_(self, "setResponseFunctions status %d", status);
-            gbinder_local_request_unref(req);
-            gbinder_remote_reply_unref(reply);
-            return transport;
-        }
+    self->radio = radio_instance_new(dev, name);
+    if (self->radio) {
+        self->radio_event_id[RADIO_EVENT_INDICATION] =
+            radio_instance_add_indication_handler(self->radio, RADIO_IND_ANY,
+                ril_binder_radio_indication_handler, self);
+        self->radio_event_id[RADIO_EVENT_RESPONSE] =
+            radio_instance_add_response_handler(self->radio, RADIO_RESP_ANY,
+                ril_binder_radio_response_handler, self);
+        self->radio_event_id[RADIO_EVENT_ACK] =
+            radio_instance_add_ack_handler(self->radio,
+                ril_binder_radio_ack_handler, self);
+        self->radio_event_id[RADIO_EVENT_DEATH] =
+            radio_instance_add_death_handler(self->radio,
+                ril_binder_radio_radio_died, self);
+        return transport;
+    } else {
+        grilio_transport_unref(transport);
+        return NULL;
     }
-    grilio_transport_unref(transport);
-    return NULL;
 }
 
 /*==========================================================================*
@@ -3453,7 +2942,7 @@ ril_binder_radio_new(
 
 static
 void
-ril_binder_radio_log_notify(
+ril_binder_radio_gbinder_log_notify(
     struct ofono_debug_desc* desc)
 {
     gbinder_log.level = (desc->flags & OFONO_DEBUG_FLAG_PRINT) ?
@@ -3463,7 +2952,22 @@ ril_binder_radio_log_notify(
 static struct ofono_debug_desc gbinder_debug OFONO_DEBUG_ATTR = {
     .name = "gbinder",
     .flags = OFONO_DEBUG_FLAG_DEFAULT,
-    .notify = ril_binder_radio_log_notify
+    .notify = ril_binder_radio_gbinder_log_notify
+};
+
+static
+void
+ril_binder_radio_gbinder_radio_log_notify(
+    struct ofono_debug_desc* desc)
+{
+    gbinder_radio_log.level = (desc->flags & OFONO_DEBUG_FLAG_PRINT) ?
+        GLOG_LEVEL_VERBOSE : GLOG_LEVEL_INHERIT;
+}
+
+static struct ofono_debug_desc gbinder_radio_debug OFONO_DEBUG_ATTR = {
+    .name = "gbinder-radio",
+    .flags = OFONO_DEBUG_FLAG_DEFAULT,
+    .notify = ril_binder_radio_gbinder_radio_log_notify
 };
 
 /*==========================================================================*
@@ -3508,8 +3012,6 @@ void ril_binder_radio_finalize(
     RilBinderRadio* self = RIL_BINDER_RADIO(object);
 
     ril_binder_radio_drop_radio(self);
-    gbinder_servicemanager_unref(self->sm);
-    gbinder_client_unref(self->client);
     gutil_idle_queue_cancel_all(self->idle);
     gutil_idle_queue_unref(self->idle);
     g_hash_table_destroy(self->req_map);
@@ -3518,7 +3020,6 @@ void ril_binder_radio_finalize(
     if (self->buf) {
         g_byte_array_unref(self->buf);
     }
-    g_free(self->fqname);
     G_OBJECT_CLASS(PARENT_CLASS)->finalize(object);
 }
 
