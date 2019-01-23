@@ -2724,6 +2724,13 @@ ril_binder_radio_indication_handler(
 
         if (event) {
             GBinderReader reader;
+            GRilIoTransport* transport = &self->parent;
+
+            /* Not all HALs bother to send rilConnected */
+            if (!transport->connected) {
+                DBG_(self, "Simulating rilConnected");
+                ril_binder_radio_connected(self);
+            }
 
             gbinder_reader_copy(&reader, args);
             DBG_(self, "IRadioIndication %u %s", code, event->name);
