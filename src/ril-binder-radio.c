@@ -2916,13 +2916,12 @@ ril_binder_radio_shutdown(
 
 GRilIoTransport*
 ril_binder_radio_new(
-    const char* dev,
-    const char* name)
+    GHashTable* opts)
 {
     RilBinderRadio* self = g_object_new(RIL_TYPE_BINDER_RADIO, NULL);
     GRilIoTransport* transport = &self->parent;
 
-    self->radio = radio_instance_new(dev, name);
+    self->radio = radio_instance_new_with_opts(opts);
     if (self->radio) {
         self->radio_event_id[RADIO_EVENT_INDICATION] =
             radio_instance_add_indication_handler(self->radio, RADIO_IND_ANY,

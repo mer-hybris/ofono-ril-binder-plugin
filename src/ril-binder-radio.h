@@ -39,8 +39,7 @@
 
 GRilIoTransport*
 ril_binder_radio_new(
-    const char* dev,
-    const char* name);
+    GHashTable* opts);
 
 #endif /* RIL_BINDER_RADIO_H */
 

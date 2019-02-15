@@ -37,21 +37,12 @@
 
 #include "ril-binder-radio.h"
 
-#define RIL_BINDER_DEFAULT_DEV  "/dev/hwbinder"
-#define RIL_BINDER_DEFAULT_NAME "slot1"
-
 static
 struct grilio_transport*
 ril_binder_transport_connect(
-    GHashTable* args)
+    GHashTable* opts)
 {
-    const char* dev = g_hash_table_lookup(args, "dev");
-    const char* name = g_hash_table_lookup(args, "name");
-
-    if (!dev) dev = RIL_BINDER_DEFAULT_DEV;
-    if (!name) name = RIL_BINDER_DEFAULT_NAME;
-    DBG("%s %s", dev, name);
-    return ril_binder_radio_new(dev, name);
+    return ril_binder_radio_new(opts);
 }
 
 static const struct ofono_ril_transport ril_binder_transport = {
