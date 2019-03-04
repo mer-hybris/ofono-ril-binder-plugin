@@ -30,14 +30,47 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef RIL_BINDER_TYPES_H
-#define RIL_BINDER_TYPES_H
+#define OFONO_API_SUBJECT_TO_CHANGE
+#include <ofono/plugin.h>
+#include <ofono/ril-transport.h>
+#include <ofono/log.h>
 
-#include <gutil_types.h>
+#include "ril_binder_radio.h"
 
-typedef struct ril_binder_radio RilBinderRadio;
+static
+struct grilio_transport*
+ril_binder_transport_connect(
+    GHashTable* args)
+{
+    return ril_binder_radio_new(args);
+}
 
-#endif /* RIL_BINDER_TYPES_H */
+static const struct ofono_ril_transport ril_binder_transport = {
+    .name = "binder",
+    .api_version = OFONO_RIL_TRANSPORT_API_VERSION,
+    .connect = ril_binder_transport_connect
+};
+
+static
+int
+ril_binder_plugin_init()
+{
+    ofono_info("Initializing RIL binder transport plugin.");
+    ofono_ril_transport_register(&ril_binder_transport);
+    return 0;
+}
+
+static
+void
+ril_binder_plugin_exit()
+{
+    DBG("");
+    ofono_ril_transport_unregister(&ril_binder_transport);
+}
+
+OFONO_PLUGIN_DEFINE(ril_binder, "RIL binder transport plugin",
+    OFONO_VERSION, OFONO_PLUGIN_PRIORITY_DEFAULT,
+    ril_binder_plugin_init, ril_binder_plugin_exit)
 
 /*
  * Local Variables:
