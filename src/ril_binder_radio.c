@@ -14,8 +14,8 @@
  *      notice, this list of conditions and the following disclaimer in the
  *      documentation and/or other materials provided with the distribution.
  *   3. Neither the names of the copyright holders nor the names of its
- *      contributors may be used to endorse or promote products derived from
- *      this software without specific prior written permission.
+ *      contributors may be used to endorse or promote products derived
+ *      from this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -30,7 +30,8 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "ril-binder-radio.h"
+#include "ril_binder_radio.h"
+#include "ril_binder_radio_impl.h"
 
 #include <ofono/ril-constants.h>
 #include <ofono/log.h>
@@ -48,6 +49,14 @@
 #include <gutil_log.h>
 #include <gutil_misc.h>
 
+#define RIL_BINDER_KEY_MODEM      "modem"
+#define RIL_BINDER_KEY_DEV        "dev"
+#define RIL_BINDER_KEY_NAME       "name"
+
+#define RIL_BINDER_DEFAULT_MODEM  "/ril_0"
+#define RIL_BINDER_DEFAULT_DEV    "/dev/hwbinder"
+#define RIL_BINDER_DEFAULT_NAME   "slot1"
+
 enum {
     RADIO_EVENT_INDICATION,
     RADIO_EVENT_RESPONSE,
@@ -56,21 +65,19 @@ enum {
     RADIO_EVENT_COUNT
 };
 
-typedef GRilIoTransportClass RilBinderRadioClass;
-
 typedef struct ril_binder_radio_call {
     guint code;
     RADIO_REQ req_tx;
     RADIO_RESP resp_tx;
     gboolean (*encode)(GRilIoRequest* in, GBinderLocalRequest* out);
-    gboolean (*decode)(GBinderReader* in, GByteArray* out);
+    RilBinderRadioDecodeFunc decode;
     const char* name;
 } RilBinderRadioCall;
 
 typedef struct ril_binder_radio_event {
     guint code;
     RADIO_IND unsol_tx;
-    gboolean (*decode)(GBinderReader* in, GByteArray* out);
+    RilBinderRadioDecodeFunc decode;
     const char* name;
 } RilBinderRadioEvent;
 
@@ -79,23 +86,19 @@ typedef struct ril_binder_radio_failure_data {
     guint serial;
 } RilBinderRadioFailureData;
 
-struct ril_binder_radio {
-    GRilIoTransport parent;
+struct ril_binder_radio_priv {
+    char* modem;
     GUtilIdleQueue* idle;
     GHashTable* req_map;      /* code -> RilBinderRadioCall */
     GHashTable* resp_map;     /* resp_tx -> RilBinderRadioCall */
     GHashTable* unsol_map;    /* unsol_tx -> RilBinderRadioEvent */
     GByteArray* buf;
-    RadioInstance* radio;
     gulong radio_event_id[RADIO_EVENT_COUNT];
 };
 
 G_DEFINE_TYPE(RilBinderRadio, ril_binder_radio, GRILIO_TYPE_TRANSPORT)
 
 #define PARENT_CLASS ril_binder_radio_parent_class
-#define RIL_TYPE_BINDER_RADIO (ril_binder_radio_get_type())
-#define RIL_BINDER_RADIO(obj) G_TYPE_CHECK_INSTANCE_CAST((obj), \
-        RIL_TYPE_BINDER_RADIO, RilBinderRadio)
 
 #define DBG_(self,fmt,args...) DBG("%s" fmt, (self)->parent.log_prefix, ##args)
 
@@ -129,6 +132,18 @@ ril_binder_radio_init_parser(
     GRilIoRequest* r)
 {
     grilio_parser_init(parser, grilio_request_data(r), grilio_request_size(r));
+}
+
+static
+const char*
+ril_binder_radio_arg_value(
+    GHashTable* args,
+    const char* key,
+    const char* def)
+{
+    const char* val = args ? g_hash_table_lookup(args, key) : NULL;
+
+    return (val && val[0]) ? val : def;
 }
 
 /*==========================================================================*
@@ -290,7 +305,7 @@ ril_binder_radio_encode_ints_to_bool_int(
         grilio_parser_get_int32(&parser, &arg1) &&
         grilio_parser_get_int32(&parser, &arg2)) {
         GBinderWriter writer;
-		
+
         gbinder_local_request_init_writer(out, &writer);
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
         gbinder_writer_append_bool(&writer, arg1);
@@ -843,7 +858,7 @@ ril_binder_radio_encode_set_facility_lock(
         grilio_parser_get_nullable_utf8(&parser, &pwd) &&
         grilio_parser_get_nullable_utf8(&parser, &cls) &&
         grilio_parser_get_nullable_utf8(&parser, &aid) &&
-        gutil_parse_int(lock, 10, &lock_num) && 
+        gutil_parse_int(lock, 10, &lock_num) &&
         gutil_parse_int(cls, 10, &cls_num)) {
         GBinderWriter writer;
 
@@ -1452,25 +1467,6 @@ ril_binder_radio_decode_operator_info_list(
         ok = TRUE;
     }
     return ok;
-}
-
-static
-void
-ril_binder_radio_decode_data_call(
-    GByteArray* out,
-    const RadioDataCall* call)
-{
-    grilio_encode_int32(out, call->status);
-    grilio_encode_int32(out, call->suggestedRetryTime);
-    grilio_encode_int32(out, call->cid);
-    grilio_encode_int32(out, call->active);
-    grilio_encode_utf8(out, call->type.data.str);
-    grilio_encode_utf8(out, call->ifname.data.str);
-    grilio_encode_utf8(out, call->addresses.data.str);
-    grilio_encode_utf8(out, call->dnses.data.str);
-    grilio_encode_utf8(out, call->gateways.data.str);
-    grilio_encode_utf8(out, call->pcscf.data.str);
-    grilio_encode_int32(out, call->mtu);
 }
 
 /**
@@ -2620,12 +2616,13 @@ ril_binder_radio_generic_failure(
     GRilIoRequest* req)
 {
     if (self->radio) {
+        RilBinderRadioPriv* priv = self->priv;
         RilBinderRadioFailureData* failure =
             g_slice_new(RilBinderRadioFailureData);
 
         failure->transport = &self->parent;
         failure->serial = grilio_request_serial(req);
-        gutil_idle_queue_add_full(self->idle,
+        gutil_idle_queue_add_full(priv->idle,
             ril_binder_radio_generic_failure_run, failure,
             ril_binder_radio_generic_failure_free);
         return GRILIO_SEND_OK;
@@ -2642,10 +2639,28 @@ void
 ril_binder_radio_drop_radio(
     RilBinderRadio* self)
 {
+    RilBinderRadioPriv* priv = self->priv;
+
     if (self->radio) {
-        radio_instance_remove_all_handlers(self->radio, self->radio_event_id);
+        radio_instance_remove_all_handlers(self->radio, priv->radio_event_id);
         radio_instance_unref(self->radio);
         self->radio = NULL;
+    }
+}
+
+static
+gboolean
+ril_binder_radio_handle_known_response(
+    RilBinderRadio* self,
+    const RilBinderRadioCall* call,
+    const RadioResponseInfo* info,
+    GBinderReader* reader)
+{
+    if (ril_binder_radio_decode_response(self, info, call->decode, reader)) {
+        return TRUE;
+    } else {
+        ofono_warn("Failed to decode %s response", call->name);
+        return FALSE;
     }
 }
 
@@ -2657,36 +2672,13 @@ ril_binder_radio_handle_known_indication(
     RADIO_IND_TYPE ind_type,
     GBinderReader* reader)
 {
-    GByteArray* buf = self->buf;
-    gboolean signaled = FALSE;
-
-    /* Protection against hypothetical recucrsion */
-    if (buf) {
-        self->buf = NULL;
-    } else {
-        buf = g_byte_array_new();
-    }
-
-    /* Decode the event */
-    g_byte_array_set_size(buf, 0);
-    if (!event->decode || event->decode(reader, buf)) {
-        GRILIO_INDICATION_TYPE type = (ind_type == RADIO_IND_ACK_EXP) ?
-            GRILIO_INDICATION_UNSOLICITED_ACK_EXP :
-            GRILIO_INDICATION_UNSOLICITED;
-
-        grilio_transport_signal_indication(&self->parent, type, event->code,
-            buf->data, buf->len);
-        signaled = TRUE;
+    if (ril_binder_radio_decode_indication(self, ind_type, event->code,
+        event->decode, reader)) {
+        return TRUE;
     } else {
         ofono_warn("Failed to decode %s indication", event->name);
+        return FALSE;
     }
-
-    g_byte_array_set_size(buf, 0);
-    if (self->buf) {
-        g_byte_array_unref(self->buf);
-    }
-    self->buf = buf;
-    return signaled;
 }
 
 static
@@ -2712,92 +2704,9 @@ ril_binder_radio_indication_handler(
     gpointer user_data)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
+    RilBinderRadioClass* klass = RIL_BINDER_RADIO_GET_CLASS(self);
 
-    /* CONNECTED indication is slightly special */
-    if (code == RADIO_IND_RIL_CONNECTED) {
-        DBG_(self, "IRadioIndication %u rilConnected", code);
-        ril_binder_radio_connected(self);
-        return TRUE;
-    } else {
-        const RilBinderRadioEvent* event = g_hash_table_lookup(self->unsol_map,
-            GINT_TO_POINTER(code));
-
-        if (event) {
-            GBinderReader reader;
-            GRilIoTransport* transport = &self->parent;
-
-            /* Not all HALs bother to send rilConnected */
-            if (!transport->connected) {
-                DBG_(self, "Simulating rilConnected");
-                ril_binder_radio_connected(self);
-            }
-
-            gbinder_reader_copy(&reader, args);
-            DBG_(self, "IRadioIndication %u %s", code, event->name);
-            return ril_binder_radio_handle_known_indication(self, event,
-                type, &reader);
-        } else {
-            DBG_(self, "IRadioIndication %u", code);
-            return FALSE;
-        }
-    }
-}
-
-static
-gboolean
-ril_binder_radio_handle_known_response(
-    RilBinderRadio* self,
-    const RilBinderRadioCall* call,
-    const RadioResponseInfo* info,
-    GBinderReader* reader)
-{
-    GByteArray* buf = self->buf;
-    gboolean signaled = FALSE;
-
-    /* Protection against hypothetical recucrsion */
-    if (buf) {
-        self->buf = NULL;
-    } else {
-        buf = g_byte_array_new();
-    }
-
-    /* Decode the response */
-    g_byte_array_set_size(buf, 0);
-    if (!call->decode || call->decode(reader, buf)) {
-        GRilIoTransport* transport = &self->parent;
-        GRILIO_RESPONSE_TYPE type;
-
-        switch (info->type) {
-        default:
-            DBG_(self, "Unexpected response type %u", info->type);
-            type = GRILIO_RESPONSE_NONE;
-            break;
-        case RADIO_RESP_SOLICITED:
-            type = GRILIO_RESPONSE_SOLICITED;
-            break;
-        case RADIO_RESP_SOLICITED_ACK:
-            type = GRILIO_RESPONSE_SOLICITED_ACK;
-            break;
-        case RADIO_RESP_SOLICITED_ACK_EXP:
-            type = GRILIO_RESPONSE_SOLICITED_ACK_EXP;
-            break;
-        }
-
-        if (type != GRILIO_RESPONSE_NONE) {
-            grilio_transport_signal_response(transport, type, info->serial,
-                info->error, buf->data, buf->len);
-            signaled = TRUE;
-        }
-    } else {
-        ofono_warn("Failed to decode %s response", call->name);
-    }
-
-    g_byte_array_set_size(buf, 0);
-    if (self->buf) {
-        g_byte_array_unref(self->buf);
-    }
-    self->buf = buf;
-    return signaled;
+    return klass->handle_indication(self, code, type, args);
 }
 
 static
@@ -2810,22 +2719,9 @@ ril_binder_radio_response_handler(
     gpointer user_data)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
-    const RilBinderRadioCall* call = g_hash_table_lookup(self->resp_map,
-        GINT_TO_POINTER(code));
+    RilBinderRadioClass* klass = RIL_BINDER_RADIO_GET_CLASS(self);
 
-    if (call) {
-        GBinderReader reader;
-
-        /* This is a known response */
-        gbinder_reader_copy(&reader, args);
-        DBG_(self, "IRadioResponse %u %s", code, call->name);
-        return ril_binder_radio_handle_known_response(self, call, info,
-            &reader);
-    } else {
-        DBG_(self, "IRadioResponse %u", code);
-        ofono_warn("Unexpected response transaction %u", code);
-        return FALSE;
-    }
+    return klass->handle_response(self, code, info, args);
 }
 
 static
@@ -2861,6 +2757,72 @@ ril_binder_radio_radio_died(
  *==========================================================================*/
 
 static
+gboolean
+ril_binder_radio_handle_response(
+    RilBinderRadio* self,
+    RADIO_RESP code,
+    const RadioResponseInfo* info,
+    const GBinderReader* args)
+{
+    RilBinderRadioPriv* priv = self->priv;
+    const RilBinderRadioCall* call = g_hash_table_lookup(priv->resp_map,
+        GINT_TO_POINTER(code));
+
+    if (call) {
+        GBinderReader copy;
+
+        /* This is a known response */
+        gbinder_reader_copy(&copy, args);
+        DBG_(self, "IRadioResponse %u %s", code, call->name);
+        return ril_binder_radio_handle_known_response(self, call, info, &copy);
+    } else {
+        DBG_(self, "IRadioResponse %u", code);
+        ofono_warn("Unexpected response transaction %u", code);
+        return FALSE;
+    }
+}
+
+static
+gboolean
+ril_binder_radio_handle_indication(
+    RilBinderRadio* self,
+    RADIO_IND code,
+    RADIO_IND_TYPE type,
+    const GBinderReader* args)
+{
+    RilBinderRadioPriv* priv = self->priv;
+
+    /* CONNECTED indication is slightly special */
+    if (code == RADIO_IND_RIL_CONNECTED) {
+        DBG_(self, "IRadioIndication %u rilConnected", code);
+        ril_binder_radio_connected(self);
+        return TRUE;
+    } else {
+        const RilBinderRadioEvent* event = g_hash_table_lookup(priv->unsol_map,
+            GINT_TO_POINTER(code));
+
+        if (event) {
+            GBinderReader reader;
+            GRilIoTransport* transport = &self->parent;
+
+            /* Not all HALs bother to send rilConnected */
+            if (!transport->connected) {
+                DBG_(self, "Simulating rilConnected");
+                ril_binder_radio_connected(self);
+            }
+
+            gbinder_reader_copy(&reader, args);
+            DBG_(self, "IRadioIndication %u %s", code, event->name);
+            return ril_binder_radio_handle_known_indication(self, event,
+                type, &reader);
+        } else {
+            DBG_(self, "IRadioIndication %u", code);
+            return FALSE;
+        }
+    }
+}
+
+static
 GRILIO_SEND_STATUS
 ril_binder_radio_send(
     GRilIoTransport* transport,
@@ -2868,7 +2830,8 @@ ril_binder_radio_send(
     guint code)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(transport);
-    const RilBinderRadioCall* call = g_hash_table_lookup(self->req_map,
+    RilBinderRadioPriv* priv = self->priv;
+    const RilBinderRadioCall* call = g_hash_table_lookup(priv->req_map,
         GINT_TO_POINTER(code));
 
     if (call) {
@@ -2914,33 +2877,187 @@ ril_binder_radio_shutdown(
  * API
  *==========================================================================*/
 
+void
+ril_binder_radio_decode_data_call(
+    GByteArray* out,
+    const RadioDataCall* call)
+{
+    grilio_encode_int32(out, call->status);
+    grilio_encode_int32(out, call->suggestedRetryTime);
+    grilio_encode_int32(out, call->cid);
+    grilio_encode_int32(out, call->active);
+    grilio_encode_utf8(out, call->type.data.str);
+    grilio_encode_utf8(out, call->ifname.data.str);
+    grilio_encode_utf8(out, call->addresses.data.str);
+    grilio_encode_utf8(out, call->dnses.data.str);
+    grilio_encode_utf8(out, call->gateways.data.str);
+    grilio_encode_utf8(out, call->pcscf.data.str);
+    grilio_encode_int32(out, call->mtu);
+}
+
+gboolean
+ril_binder_radio_decode_response(
+    RilBinderRadio* self,
+    const RadioResponseInfo* info,
+    RilBinderRadioDecodeFunc decode,
+    GBinderReader* reader)
+{
+    RilBinderRadioPriv* priv = self->priv;
+    GByteArray* buf = priv->buf;
+    gboolean signaled = FALSE;
+
+    /* Protection against hypothetical recursion */
+    if (buf) {
+        priv->buf = NULL;
+    } else {
+        buf = g_byte_array_new();
+    }
+
+    /* Decode the response */
+    g_byte_array_set_size(buf, 0);
+    if (!decode || decode(reader, buf)) {
+        GRilIoTransport* transport = &self->parent;
+        GRILIO_RESPONSE_TYPE type;
+
+        switch (info->type) {
+        default:
+            DBG_(self, "Unexpected response type %u", info->type);
+            type = GRILIO_RESPONSE_NONE;
+            break;
+        case RADIO_RESP_SOLICITED:
+            type = GRILIO_RESPONSE_SOLICITED;
+            break;
+        case RADIO_RESP_SOLICITED_ACK:
+            type = GRILIO_RESPONSE_SOLICITED_ACK;
+            break;
+        case RADIO_RESP_SOLICITED_ACK_EXP:
+            type = GRILIO_RESPONSE_SOLICITED_ACK_EXP;
+            break;
+        }
+
+        if (type != GRILIO_RESPONSE_NONE) {
+            grilio_transport_signal_response(transport, type, info->serial,
+                info->error, buf->data, buf->len);
+            signaled = TRUE;
+        }
+    }
+
+    g_byte_array_set_size(buf, 0);
+    if (priv->buf) {
+        g_byte_array_unref(priv->buf);
+    }
+    priv->buf = buf;
+    return signaled;
+}
+
+gboolean
+ril_binder_radio_decode_indication(
+    RilBinderRadio* self,
+    RADIO_IND_TYPE ind_type,
+    guint ril_code,
+    RilBinderRadioDecodeFunc decode,
+    GBinderReader* reader)
+{
+    RilBinderRadioPriv* priv = self->priv;
+    GByteArray* buf = priv->buf;
+    gboolean signaled = FALSE;
+
+    /* Protection against hypothetical recursion */
+    if (buf) {
+        priv->buf = NULL;
+    } else {
+        buf = g_byte_array_new();
+    }
+
+    /* Decode the event */
+    g_byte_array_set_size(buf, 0);
+    if (!decode || decode(reader, buf)) {
+        GRILIO_INDICATION_TYPE type = (ind_type == RADIO_IND_ACK_EXP) ?
+            GRILIO_INDICATION_UNSOLICITED_ACK_EXP :
+            GRILIO_INDICATION_UNSOLICITED;
+
+        grilio_transport_signal_indication(&self->parent, type, ril_code,
+            buf->data, buf->len);
+        signaled = TRUE;
+    }
+
+    g_byte_array_set_size(buf, 0);
+    if (priv->buf) {
+        g_byte_array_unref(priv->buf);
+    }
+    priv->buf = buf;
+    return signaled;
+}
+
 GRilIoTransport*
 ril_binder_radio_new(
-    const char* dev,
-    const char* name)
+    GHashTable* args)
 {
     RilBinderRadio* self = g_object_new(RIL_TYPE_BINDER_RADIO, NULL);
     GRilIoTransport* transport = &self->parent;
 
-    self->radio = radio_instance_new(dev, name);
-    if (self->radio) {
-        self->radio_event_id[RADIO_EVENT_INDICATION] =
-            radio_instance_add_indication_handler(self->radio, RADIO_IND_ANY,
-                ril_binder_radio_indication_handler, self);
-        self->radio_event_id[RADIO_EVENT_RESPONSE] =
-            radio_instance_add_response_handler(self->radio, RADIO_RESP_ANY,
-                ril_binder_radio_response_handler, self);
-        self->radio_event_id[RADIO_EVENT_ACK] =
-            radio_instance_add_ack_handler(self->radio,
-                ril_binder_radio_ack_handler, self);
-        self->radio_event_id[RADIO_EVENT_DEATH] =
-            radio_instance_add_death_handler(self->radio,
-                ril_binder_radio_radio_died, self);
+    if (ril_binder_radio_init_base(self, args)) {
         return transport;
     } else {
         grilio_transport_unref(transport);
         return NULL;
     }
+}
+
+const char*
+ril_binder_radio_arg_modem(
+    GHashTable* args)
+{
+    return ril_binder_radio_arg_value(args, RIL_BINDER_KEY_MODEM,
+        RIL_BINDER_DEFAULT_MODEM);
+}
+
+const char*
+ril_binder_radio_arg_dev(
+    GHashTable* args)
+{
+    return ril_binder_radio_arg_value(args, RIL_BINDER_KEY_DEV,
+        RIL_BINDER_DEFAULT_DEV);
+}
+
+const char*
+ril_binder_radio_arg_name(
+    GHashTable* args)
+{
+    return ril_binder_radio_arg_value(args, RIL_BINDER_KEY_NAME,
+        RIL_BINDER_DEFAULT_NAME);
+}
+
+gboolean
+ril_binder_radio_init_base(
+    RilBinderRadio* self,
+    GHashTable* args)
+{
+    RilBinderRadioPriv* priv = self->priv;
+    const char* modem = ril_binder_radio_arg_modem(args);
+    const char* dev = ril_binder_radio_arg_dev(args);
+    const char* name = ril_binder_radio_arg_name(args);
+
+    DBG("%s %s %s", modem, dev, name);
+
+    self->modem = priv->modem = g_strdup(modem);
+    self->radio = radio_instance_new(dev, name);
+    if (self->radio) {
+        priv->radio_event_id[RADIO_EVENT_INDICATION] =
+            radio_instance_add_indication_handler(self->radio, RADIO_IND_ANY,
+                ril_binder_radio_indication_handler, self);
+        priv->radio_event_id[RADIO_EVENT_RESPONSE] =
+            radio_instance_add_response_handler(self->radio, RADIO_RESP_ANY,
+                ril_binder_radio_response_handler, self);
+        priv->radio_event_id[RADIO_EVENT_ACK] =
+            radio_instance_add_ack_handler(self->radio,
+                ril_binder_radio_ack_handler, self);
+        priv->radio_event_id[RADIO_EVENT_DEATH] =
+            radio_instance_add_death_handler(self->radio,
+                ril_binder_radio_radio_died, self);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /*==========================================================================*
@@ -2987,19 +3104,22 @@ ril_binder_radio_init(
     RilBinderRadio* self)
 {
     guint i;
+    RilBinderRadioPriv* priv = G_TYPE_INSTANCE_GET_PRIVATE
+        (self, RIL_TYPE_BINDER_RADIO, RilBinderRadioPriv);
 
-    self->idle = gutil_idle_queue_new();
-    self->req_map = g_hash_table_new(g_direct_hash, g_direct_equal);
-    self->resp_map = g_hash_table_new(g_direct_hash, g_direct_equal);
-    self->unsol_map = g_hash_table_new(g_direct_hash, g_direct_equal);
+    self->priv = priv;
+    priv->idle = gutil_idle_queue_new();
+    priv->req_map = g_hash_table_new(g_direct_hash, g_direct_equal);
+    priv->resp_map = g_hash_table_new(g_direct_hash, g_direct_equal);
+    priv->unsol_map = g_hash_table_new(g_direct_hash, g_direct_equal);
 
     for (i = 0; i < G_N_ELEMENTS(ril_binder_radio_calls); i++) {
         const RilBinderRadioCall* call = ril_binder_radio_calls + i;
 
-        g_hash_table_insert(self->req_map, GINT_TO_POINTER(call->code),
+        g_hash_table_insert(priv->req_map, GINT_TO_POINTER(call->code),
             (gpointer)call);
         if (call->resp_tx) {
-            g_hash_table_insert(self->resp_map, GINT_TO_POINTER(call->resp_tx),
+            g_hash_table_insert(priv->resp_map, GINT_TO_POINTER(call->resp_tx),
             (gpointer)call);
         }
     }
@@ -3007,26 +3127,29 @@ ril_binder_radio_init(
     for (i = 0; i < G_N_ELEMENTS(ril_binder_radio_events); i++) {
         const RilBinderRadioEvent* event = ril_binder_radio_events + i;
 
-        g_hash_table_insert(self->unsol_map, GINT_TO_POINTER(event->unsol_tx),
+        g_hash_table_insert(priv->unsol_map, GINT_TO_POINTER(event->unsol_tx),
             (gpointer)event);
     }
 }
 
 static
-void ril_binder_radio_finalize(
+void
+ril_binder_radio_finalize(
     GObject* object)
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(object);
+    RilBinderRadioPriv* priv = self->priv;
 
     ril_binder_radio_drop_radio(self);
-    gutil_idle_queue_cancel_all(self->idle);
-    gutil_idle_queue_unref(self->idle);
-    g_hash_table_destroy(self->req_map);
-    g_hash_table_destroy(self->resp_map);
-    g_hash_table_destroy(self->unsol_map);
-    if (self->buf) {
-        g_byte_array_unref(self->buf);
+    gutil_idle_queue_cancel_all(priv->idle);
+    gutil_idle_queue_unref(priv->idle);
+    g_hash_table_destroy(priv->req_map);
+    g_hash_table_destroy(priv->resp_map);
+    g_hash_table_destroy(priv->unsol_map);
+    if (priv->buf) {
+        g_byte_array_unref(priv->buf);
     }
+    g_free(priv->modem);
     G_OBJECT_CLASS(PARENT_CLASS)->finalize(object);
 }
 
@@ -3035,9 +3158,14 @@ void
 ril_binder_radio_class_init(
     RilBinderRadioClass* klass)
 {
-    klass->ril_version_offset = 100;
-    klass->send = ril_binder_radio_send;
-    klass->shutdown = ril_binder_radio_shutdown;
+    GRilIoTransportClass* parent = &klass->parent;
+
+    parent->ril_version_offset = 100;
+    parent->send = ril_binder_radio_send;
+    parent->shutdown = ril_binder_radio_shutdown;
+    klass->handle_response = ril_binder_radio_handle_response;
+    klass->handle_indication = ril_binder_radio_handle_indication;
+    g_type_class_add_private(klass, sizeof(RilBinderRadioPriv));
     G_OBJECT_CLASS(klass)->finalize = ril_binder_radio_finalize;
 }
 
