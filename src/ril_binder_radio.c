@@ -1632,7 +1632,6 @@ ril_binder_radio_decode_signal_strength(
         (in, RadioSignalStrength);
 
     if (strength) {
-        /* RIL_SignalStrength_v6 */
         /* GW_SignalStrength */
         grilio_encode_int32(out, strength->gw.signalStrength);
         grilio_encode_int32(out, strength->gw.bitErrorRate);
@@ -1646,11 +1645,16 @@ ril_binder_radio_decode_signal_strength(
         grilio_encode_int32(out, strength->evdo.ecio);
         grilio_encode_int32(out, strength->evdo.signalNoiseRatio);
 
-        /* LTE_SignalStrength */
+        /* LTE_SignalStrength_v8 */
         grilio_encode_int32(out, strength->lte.signalStrength);
         grilio_encode_int32(out, strength->lte.rsrp);
-        /* The rest is ignored */
+        grilio_encode_int32(out, strength->lte.rsrq);
+        grilio_encode_int32(out, strength->lte.rssnr);
+        grilio_encode_int32(out, strength->lte.cqi);
+        grilio_encode_int32(out, strength->lte.timingAdvance);
 
+        /* TD_SCDMA_SignalStrength */
+        grilio_encode_int32(out, strength->tdScdma.rscp);
         return TRUE;
     }
     return FALSE;
