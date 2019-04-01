@@ -2263,7 +2263,7 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL,
         RADIO_REQ_SET_NETWORK_SELECTION_MODE_MANUAL,
         RADIO_RESP_SET_NETWORK_SELECTION_MODE_MANUAL,
-        ril_binder_radio_encode_serial,
+        ril_binder_radio_encode_string,
         NULL,
         "setNetworkSelectionModeManual"
     },{
