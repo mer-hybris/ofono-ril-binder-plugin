@@ -1142,7 +1142,7 @@ ril_binder_radio_decode_byte_array(
     GBinderReader* in,
     GByteArray* out)
 {
-    guint32 size = 0;
+    gsize size = 0;
     const guint8* ptr = gbinder_reader_read_hidl_byte_vec(in, &size);
 
     if (ptr) {
@@ -1158,7 +1158,7 @@ ril_binder_radio_decode_byte_array_to_hex(
     GBinderReader* in,
     GByteArray* out)
 {
-    guint32 size = 0;
+    gsize size = 0;
     const guint8* bytes = gbinder_reader_read_hidl_byte_vec(in, &size);
 
     if (bytes) {
