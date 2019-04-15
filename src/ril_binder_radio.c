@@ -2505,6 +2505,11 @@ static const RilBinderRadioEvent ril_binder_radio_events[] = {
         ril_binder_radio_decode_byte_array_to_hex,
         "newSms"
     },{
+        RIL_UNSOL_RESPONSE_NEW_SMS_STATUS_REPORT,
+        RADIO_IND_NEW_SMS_STATUS_REPORT,
+        ril_binder_radio_decode_byte_array_to_hex,
+        "newSmsStatusReport"
+    },{
         RIL_UNSOL_ON_USSD,
         RADIO_IND_ON_USSD,
         ril_binder_radio_decode_ussd,
