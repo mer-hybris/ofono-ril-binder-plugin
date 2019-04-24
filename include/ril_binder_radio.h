@@ -39,6 +39,9 @@ GRilIoTransport*
 ril_binder_radio_new(
     GHashTable* args);
 
+/* Logging */
+extern GLogModule ril_binder_radio_log;
+
 #endif /* RIL_BINDER_RADIO_H */
 
 /*

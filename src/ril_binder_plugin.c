@@ -35,7 +35,64 @@
 #include <ofono/ril-transport.h>
 #include <ofono/log.h>
 
+#include <radio_types.h>
+#include <gbinder_types.h>
+#include <gutil_log.h>
+
 #include "ril_binder_radio.h"
+
+/*==========================================================================*
+ * Logging
+ *==========================================================================*/
+
+static
+void
+ril_binder_plugin_binder_log_notify(
+    struct ofono_debug_desc* desc)
+{
+    gbinder_log.level = (desc->flags & OFONO_DEBUG_FLAG_PRINT) ?
+        GLOG_LEVEL_VERBOSE : GLOG_LEVEL_INHERIT;
+}
+
+static struct ofono_debug_desc gbinder_debug OFONO_DEBUG_ATTR = {
+    .name = "binder",
+    .flags = OFONO_DEBUG_FLAG_DEFAULT,
+    .notify = ril_binder_plugin_binder_log_notify
+};
+
+static
+void
+ril_binder_plugin_binder_radio_log_notify(
+    struct ofono_debug_desc* desc)
+{
+    gbinder_radio_log.level = (desc->flags & OFONO_DEBUG_FLAG_PRINT) ?
+        GLOG_LEVEL_VERBOSE : GLOG_LEVEL_INHERIT;
+}
+
+static struct ofono_debug_desc gbinder_radio_debug OFONO_DEBUG_ATTR = {
+    .name = "binder-radio",
+    .flags = OFONO_DEBUG_FLAG_DEFAULT,
+    .notify = ril_binder_plugin_binder_radio_log_notify
+};
+
+static
+void
+ril_binder_plugin_ril_binder_log_notify(
+    struct ofono_debug_desc* desc)
+{
+    ril_binder_radio_log.level = (desc->flags & OFONO_DEBUG_FLAG_PRINT) ?
+        GLOG_LEVEL_VERBOSE : GLOG_LEVEL_INHERIT;
+}
+
+static struct ofono_debug_desc grilio_binder_log_debug OFONO_DEBUG_ATTR = {
+    .name = "ril-binder",
+    .flags = OFONO_DEBUG_FLAG_DEFAULT,
+    .notify = ril_binder_plugin_ril_binder_log_notify
+};
+
+/*==========================================================================*
+ * Transport
+ *==========================================================================*/
 
 static
 struct grilio_transport*
@@ -50,6 +107,10 @@ static const struct ofono_ril_transport ril_binder_transport = {
     .api_version = OFONO_RIL_TRANSPORT_API_VERSION,
     .connect = ril_binder_transport_connect
 };
+
+/*==========================================================================*
+ * Plugin
+ *==========================================================================*/
 
 static
 int

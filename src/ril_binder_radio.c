@@ -46,8 +46,12 @@
 #include <radio_instance.h>
 
 #include <gutil_idlequeue.h>
-#include <gutil_log.h>
 #include <gutil_misc.h>
+
+/* Logging */
+#define GLOG_MODULE_NAME ril_binder_radio_log
+#include <gutil_log.h>
+GLOG_MODULE_DEFINE("grilio-binder");
 
 #define RIL_BINDER_KEY_MODEM      "modem"
 #define RIL_BINDER_KEY_DEV        "dev"
@@ -100,7 +104,8 @@ G_DEFINE_TYPE(RilBinderRadio, ril_binder_radio, GRILIO_TYPE_TRANSPORT)
 
 #define PARENT_CLASS ril_binder_radio_parent_class
 
-#define DBG_(self,fmt,args...) DBG("%s" fmt, (self)->parent.log_prefix, ##args)
+#define DBG_(self,fmt,args...) \
+    GDEBUG("%s" fmt, (self)->parent.log_prefix, ##args)
 
 /*==========================================================================*
  * Utilities
@@ -3068,40 +3073,6 @@ ril_binder_radio_init_base(
     }
     return FALSE;
 }
-
-/*==========================================================================*
- * Logging
- *==========================================================================*/
-
-static
-void
-ril_binder_radio_gbinder_log_notify(
-    struct ofono_debug_desc* desc)
-{
-    gbinder_log.level = (desc->flags & OFONO_DEBUG_FLAG_PRINT) ?
-        GLOG_LEVEL_VERBOSE : GLOG_LEVEL_INHERIT;
-}
-
-static struct ofono_debug_desc gbinder_debug OFONO_DEBUG_ATTR = {
-    .name = "gbinder",
-    .flags = OFONO_DEBUG_FLAG_DEFAULT,
-    .notify = ril_binder_radio_gbinder_log_notify
-};
-
-static
-void
-ril_binder_radio_gbinder_radio_log_notify(
-    struct ofono_debug_desc* desc)
-{
-    gbinder_radio_log.level = (desc->flags & OFONO_DEBUG_FLAG_PRINT) ?
-        GLOG_LEVEL_VERBOSE : GLOG_LEVEL_INHERIT;
-}
-
-static struct ofono_debug_desc gbinder_radio_debug OFONO_DEBUG_ATTR = {
-    .name = "gbinder-radio",
-    .flags = OFONO_DEBUG_FLAG_DEFAULT,
-    .notify = ril_binder_radio_gbinder_radio_log_notify
-};
 
 /*==========================================================================*
  * Internals
