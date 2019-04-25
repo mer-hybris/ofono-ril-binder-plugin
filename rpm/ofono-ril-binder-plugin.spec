@@ -1,5 +1,5 @@
 Name: ofono-ril-binder-plugin
-Version: 1.0.3
+Version: 1.0.4
 Release: 1
 Summary: Ofono RIL binder transport plugin
 Group: Development/Libraries
@@ -9,6 +9,7 @@ Source: %{name}-%{version}.tar.bz2
 
 Requires: ofono >= 1.21+git42
 Requires: libgrilio >= 1.0.26
+Requires: libgrilio-binder >= 1.0.4
 BuildRequires: ofono-devel >= 1.21+git42
 BuildRequires: pkgconfig(libgrilio) >= 1.0.26
 
