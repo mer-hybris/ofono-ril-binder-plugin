@@ -12,10 +12,12 @@
 # on all platforms. 
 #
 
-LIB_LDPKGS = libgrilio libgbinder libgbinder-radio libglibutil gobject-2.0 glib-2.0
+PKGS = libgbinder libgbinder-radio libgrilio libglibutil gobject-2.0 glib-2.0
+
+LIB_LDPKGS = $(PKGS)
 LIB_PKGS = $(LIB_LDPKGS)
 
-PLUGIN_LDPKGS = libgrilio libglibutil
+PLUGIN_LDPKGS = $(PKGS)
 PLUGIN_PKGS = ofono $(PLUGIN_LDPKGS)
 
 #
