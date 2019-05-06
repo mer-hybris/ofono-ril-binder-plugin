@@ -111,22 +111,63 @@ G_DEFINE_TYPE(RilBinderRadio, ril_binder_radio, GRILIO_TYPE_TRANSPORT)
  * Utilities
  *==========================================================================*/
 
+#define ril_binder_radio_write_hidl_string_data(writer,ptr,field,index) \
+    ril_binder_radio_write_string_with_parent(writer, &ptr->field, index, \
+        (guint8*)(&ptr->field) - (guint8*)ptr)
+
 static
-gboolean
-ril_binder_radio_string_init(
+inline
+void
+ril_binder_radio_write_string_with_parent(
+    GBinderWriter* writer,
+    const GBinderHidlString* str,
+    guint32 index,
+    guint32 offset)
+{
+    GBinderParent parent;
+
+    parent.index = index;
+    parent.offset = offset;
+
+    /* Strings are NULL-terminated, hence len + 1 */
+    gbinder_writer_append_buffer_object_with_parent(writer, str->data.str,
+        str->len + 1, &parent);
+}
+
+static
+void
+ril_binder_radio_write_data_profile_strings(
+    GBinderWriter* writer,
+    const RadioDataProfile* dp,
+    guint pi)
+{
+    /* Write the string data in the right order*/
+    ril_binder_radio_write_hidl_string_data(writer, dp, apn, pi);
+    ril_binder_radio_write_hidl_string_data(writer, dp, protocol, pi);
+    ril_binder_radio_write_hidl_string_data(writer, dp, roamingProtocol, pi);
+    ril_binder_radio_write_hidl_string_data(writer, dp, user, pi);
+    ril_binder_radio_write_hidl_string_data(writer, dp, password, pi);
+    ril_binder_radio_write_hidl_string_data(writer, dp, mvnoMatchData, pi);
+}
+
+static
+void
+ril_binder_radio_take_string(
+    GBinderLocalRequest* out,
     GBinderHidlString* str,
-    const char* chars)
+    char* chars)
 {
     str->owns_buffer = TRUE;
-    if (chars) {
+    if (chars && chars[0]) {
+        /* GBinderLocalRequest takes ownership of the string contents */
         str->data.str = chars;
         str->len = strlen(chars);
-        return TRUE;
+        gbinder_local_request_cleanup(out, g_free, chars);
     } else {
         /* Replace NULL strings with empty strings */
         str->data.str = "";
         str->len = 0;
-        return FALSE;
+        g_free(chars);
     }
 }
 
@@ -352,7 +393,7 @@ ril_binder_radio_encode_deactivate_data_call(
 }
 
 /**
- * @param serial Serial number of request.
+ * @param int32_t Serial number of request.
  * @param dialInfo Dial struct
  */
 static
@@ -371,37 +412,35 @@ ril_binder_radio_encode_dial(
         /* and ignore UUS information */
         GBinderWriter writer;
         GBinderParent parent;
-        RadioDial* dial = g_new0(RadioDial, 1);
+        RadioDial* dial;
 
-        ril_binder_radio_string_init(&dial->address, number);
-
-        /* Pointers must be alive for the lifetime of the request */
-        gbinder_local_request_cleanup(out, g_free, dial);
-        gbinder_local_request_cleanup(out, g_free, number);
-
+        /* Initialize the writer and the data to be written */
         gbinder_local_request_init_writer(out, &writer);
+        dial = gbinder_writer_new0(&writer, RadioDial);
+        ril_binder_radio_take_string(out, &dial->address, number);
+
+        /* Write the arguments */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
 
         /* Write the parent structure */
-        parent.index = gbinder_writer_append_buffer_object(&writer,
-            dial, sizeof(*dial));
+        parent.index = gbinder_writer_append_buffer_object(&writer, dial,
+            sizeof(*dial));
 
-        /* Strings are NULL-terminated, hence len + 1 */
-        parent.offset = G_STRUCT_OFFSET(RadioDial, address.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            dial->address.data.str, dial->address.len + 1, &parent);
+        /* Write the string data */
+        ril_binder_radio_write_hidl_string_data(&writer, dial, address,
+            parent.index);
 
         /* UUS information is empty but we still need to write a buffer */
         parent.offset = G_STRUCT_OFFSET(RadioDial, uusInfo.data.ptr);
         gbinder_writer_append_buffer_object_with_parent(&writer,
-            dial /* arbitrary pointer */, 0, &parent);
+            "" /* arbitrary pointer */, 0, &parent);
         return TRUE;
     }
     return FALSE;
 }
 
 /**
- * @param serial Serial number of request.
+ * @param int32_t Serial number of request.
  * @param message GsmSmsMessage as defined in types.hal
  */
 static
@@ -419,34 +458,26 @@ ril_binder_radio_encode_gsm_sms_message(
     if (grilio_parser_get_int32(&parser, &count) && count == 2 &&
         grilio_parser_get_nullable_utf8(&parser, &smsc) &&
         (pdu = grilio_parser_get_utf8(&parser)) != NULL) {
-        RadioGsmSmsMessage* sms = g_new0(RadioGsmSmsMessage, 1);
+        RadioGsmSmsMessage* sms;
         GBinderWriter writer;
-        GBinderParent parent;
+        guint parent;
 
-        /* Pointers must be alive for the lifetime of the request */
-        gbinder_local_request_cleanup(out, g_free, sms);
-        if (ril_binder_radio_string_init(&sms->smscPdu, smsc)) {
-            gbinder_local_request_cleanup(out, g_free, smsc);
-        }
-        if (ril_binder_radio_string_init(&sms->pdu, pdu)) {
-            gbinder_local_request_cleanup(out, g_free, pdu);
-        }
-
+        /* Initialize the writer and the data to be written */
         gbinder_local_request_init_writer(out, &writer);
+        sms = gbinder_writer_new0(&writer, RadioGsmSmsMessage);
+        ril_binder_radio_take_string(out, &sms->smscPdu, smsc);
+        ril_binder_radio_take_string(out, &sms->pdu, pdu);
+
+        /* Write the arguments */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
 
         /* Write the parent structure */
-        parent.index = gbinder_writer_append_buffer_object(&writer,
+        parent = gbinder_writer_append_buffer_object(&writer,
             sms, sizeof(*sms));
 
-        /* Strings are NULL-terminated, hence len + 1 */
-        parent.offset = G_STRUCT_OFFSET(RadioGsmSmsMessage, smscPdu.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            sms->smscPdu.data.str, sms->smscPdu.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioGsmSmsMessage, pdu.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    sms->pdu.data.str, sms->pdu.len + 1, &parent);
+        /* Write the string data in the right order */
+        ril_binder_radio_write_hidl_string_data(&writer, sms, smscPdu, parent);
+        ril_binder_radio_write_hidl_string_data(&writer, sms, pdu, parent);
         return TRUE;
     }
 
@@ -456,13 +487,13 @@ ril_binder_radio_encode_gsm_sms_message(
 }
 
 /**
- * @param serial Serial number of request.
- * @param radioTechnology Radio technology to use.
- * @param dataProfileInfo data profile info.
- * @param modemCognitive Indicating this profile was sent to the modem
+ * @param int32_t Serial number of request.
+ * @param RadioTechnology Radio technology to use.
+ * @param DataProfileInfo Data profile info.
+ * @param bool modemCognitive Indicating this profile was sent to the modem
  *                       through setDataProfile earlier.
- * @param roamingAllowed Indicating data roaming is allowed or not by the user.
- * @param isRoaming Indicating the device is roaming or not.
+ * @param bool roamingAllowed Indicating data roaming is allowed or not.
+ * @param bool isRoaming Indicating the device is roaming or not.
  */
 static
 gboolean
@@ -492,82 +523,42 @@ ril_binder_radio_encode_setup_data_call(
         gutil_parse_int(auth_str, 10, &auth) &&
         (proto = grilio_parser_get_utf8(&parser)) != NULL) {
         GBinderWriter writer;
-        GBinderParent parent;
-        RadioDataProfile* profile = g_new0(RadioDataProfile, 1);
+        guint parent;
+        RadioDataProfile* profile;
 
-	/* ril.h has this to say about the radio tech parameter:
-	 *
-	 * ((const char **)data)[0] Radio technology to use: 0-CDMA,
-	 *                          1-GSM/UMTS, 2... for values above 2
-	 *                          this is RIL_RadioTechnology + 2.
-	 *
-	 * Makes little sense but it is what it is.
-	 */
+        /* ril.h has this to say about the radio tech parameter:
+         *
+         * ((const char **)data)[0] Radio technology to use: 0-CDMA,
+         *                          1-GSM/UMTS, 2... for values above 2
+         *                          this is RIL_RadioTechnology + 2.
+         *
+         * Makes little sense but it is what it is.
+         */
         if (tech > 4) {
             tech -= 2;
         }
 
+        /* Initialize the writer and the data to be written */
+        gbinder_local_request_init_writer(out, &writer);
+        profile = gbinder_writer_new0(&writer, RadioDataProfile);
+        ril_binder_radio_take_string(out, &profile->apn, apn);
+        ril_binder_radio_take_string(out, &profile->protocol, proto);
+        ril_binder_radio_take_string(out, &profile->user, user);
+        ril_binder_radio_take_string(out, &profile->password, password);
+        ril_binder_radio_take_string(out, &profile->mvnoMatchData, NULL);
+        profile->roamingProtocol = profile->protocol;
         profile->authType = auth;
 
-        /* Pointers must be alive for the lifetime of the request */
-        gbinder_local_request_cleanup(out, g_free, profile);
-        if (ril_binder_radio_string_init(&profile->apn, apn)) {
-            gbinder_local_request_cleanup(out, g_free, apn);
-        }
-        ril_binder_radio_string_init(&profile->roamingProtocol, proto);
-        if (ril_binder_radio_string_init(&profile->protocol, proto)) {
-            gbinder_local_request_cleanup(out, g_free, proto);
-        }
-        if (ril_binder_radio_string_init(&profile->user, user)) {
-            gbinder_local_request_cleanup(out, g_free, user);
-        }
-        if (ril_binder_radio_string_init(&profile->password, password)) {
-            gbinder_local_request_cleanup(out, g_free, password);
-        }
-
         /* Write the parcel */
-        gbinder_local_request_init_writer(out, &writer);
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
-
         gbinder_writer_append_int32(&writer, tech); /* radioTechnology */
-        parent.index = gbinder_writer_append_buffer_object(&writer,
+        parent = gbinder_writer_append_buffer_object(&writer,
             profile, sizeof(*profile));             /* dataProfileInfo */
-
-        /* Strings are NULL-terminated, hence len + 1 */
-        parent.offset = G_STRUCT_OFFSET(RadioDataProfile, apn.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    profile->apn.data.str, profile->apn.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioDataProfile, protocol.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    profile->protocol.data.str, profile->protocol.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioDataProfile,
-            roamingProtocol.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    profile->roamingProtocol.data.str,
-            profile->roamingProtocol.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioDataProfile, user.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    profile->user.data.str, profile->user.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioDataProfile, password.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    profile->password.data.str, profile->password.len + 1, &parent);
-
-        profile->mvnoMatchData.data.str = "";
-        parent.offset = G_STRUCT_OFFSET(RadioDataProfile,
-            mvnoMatchData.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    profile->mvnoMatchData.data.str,
-            profile->mvnoMatchData.len + 1, &parent);
-
-        /* Done with DataProfileInfo */
+        ril_binder_radio_write_data_profile_strings(&writer, profile, parent);
         gbinder_writer_append_bool(&writer, FALSE); /* modemCognitive */
+        /* TODO: provide the actual roaming status? */
         gbinder_writer_append_bool(&writer, TRUE);  /* roamingAllowed */
         gbinder_writer_append_bool(&writer, FALSE); /* isRoaming */
-
         ok = TRUE;
     } else {
         g_free(apn);
@@ -582,7 +573,7 @@ ril_binder_radio_encode_setup_data_call(
 }
 
 /**
- * @param serial Serial number of request.
+ * @param int32_t Serial number of request.
  * @param smsWriteArgs SmsWriteArgs defined in types.hal
  */
 static
@@ -601,33 +592,24 @@ ril_binder_radio_encode_sms_write_args(
         (pdu = grilio_parser_get_utf8(&parser)) != NULL &&
         grilio_parser_get_nullable_utf8(&parser, &smsc)) {
         GBinderWriter writer;
-        GBinderParent parent;
+        guint parent;
 
-        /* Pointers must be alive for the lifetime of the request */
-        gbinder_local_request_cleanup(out, g_free, sms);
-        if (ril_binder_radio_string_init(&sms->pdu, pdu)) {
-            gbinder_local_request_cleanup(out, g_free, pdu);
-        }
-        if (ril_binder_radio_string_init(&sms->smsc, smsc)) {
-            gbinder_local_request_cleanup(out, g_free, smsc);
-        }
-
+        /* Initialize the writer and the data to be written */
         gbinder_local_request_init_writer(out, &writer);
+        gbinder_local_request_cleanup(out, g_free, sms);
+        ril_binder_radio_take_string(out, &sms->pdu, pdu);
+        ril_binder_radio_take_string(out, &sms->smsc, smsc);
+
+        /* Write the arguments */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
 
         /* Write the parent structure */
-        parent.index = gbinder_writer_append_buffer_object(&writer,
+        parent = gbinder_writer_append_buffer_object(&writer,
             sms, sizeof(*sms));
 
-        /* Strings are NULL-terminated, hence len + 1 */
-        parent.offset = G_STRUCT_OFFSET(RadioSmsWriteArgs, pdu.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-	    sms->pdu.data.str, sms->pdu.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioSmsWriteArgs, smsc.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            sms->smsc.data.str, sms->smsc.len + 1, &parent);
-
+        /* Write the string data in the right order */
+        ril_binder_radio_write_hidl_string_data(&writer, sms, pdu, parent);
+        ril_binder_radio_write_hidl_string_data(&writer, sms, smsc, parent);
         return TRUE;
     }
 
@@ -638,8 +620,8 @@ ril_binder_radio_encode_sms_write_args(
 }
 
 /**
- * @param serial Serial number of request.
- * @param iccIo IccIo
+ * @param int32_t Serial number of request.
+ * @param IccIo
  */
 static
 gboolean
@@ -665,46 +647,27 @@ ril_binder_radio_encode_icc_io(
         grilio_parser_get_nullable_utf8(&parser, &pin2) &&
         grilio_parser_get_nullable_utf8(&parser, &aid)) {
         GBinderWriter writer;
-        GBinderParent parent;
+        guint parent;
 
-        /* Pointers must be alive for the lifetime of the request */
-        gbinder_local_request_cleanup(out, g_free, io);
-        if (ril_binder_radio_string_init(&io->path, path)) {
-            gbinder_local_request_cleanup(out, g_free, path);
-        }
-        if (ril_binder_radio_string_init(&io->data, data)) {
-            gbinder_local_request_cleanup(out, g_free, data);
-        }
-        if (ril_binder_radio_string_init(&io->pin2, pin2)) {
-            gbinder_local_request_cleanup(out, g_free, pin2);
-        }
-        if (ril_binder_radio_string_init(&io->aid, aid)) {
-            gbinder_local_request_cleanup(out, g_free, aid);
-        }
-
+        /* Initialize the writer and the data to be written */
         gbinder_local_request_init_writer(out, &writer);
+        gbinder_local_request_cleanup(out, g_free, io);
+        ril_binder_radio_take_string(out, &io->path, path);
+        ril_binder_radio_take_string(out, &io->data, data);
+        ril_binder_radio_take_string(out, &io->pin2, pin2);
+        ril_binder_radio_take_string(out, &io->aid, aid);
+
+        /* Write the arguments */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
 
         /* Write the parent structure */
-        parent.index = gbinder_writer_append_buffer_object(&writer,
-            io, sizeof(*io));
+        parent = gbinder_writer_append_buffer_object(&writer, io, sizeof(*io));
 
-        /* Strings are NULL-terminated, hence len + 1 */
-        parent.offset = G_STRUCT_OFFSET(RadioIccIo, path.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            io->path.data.str, io->path.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioIccIo, data.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            io->data.data.str, io->data.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioIccIo, pin2.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            io->pin2.data.str, io->pin2.len + 1, &parent);
-
-        parent.offset = G_STRUCT_OFFSET(RadioIccIo, aid.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            io->aid.data.str, io->aid.len + 1, &parent);
+        /* Write the string data in the right order */
+        ril_binder_radio_write_hidl_string_data(&writer, io, path, parent);
+        ril_binder_radio_write_hidl_string_data(&writer, io, data, parent);
+        ril_binder_radio_write_hidl_string_data(&writer, io, pin2, parent);
+        ril_binder_radio_write_hidl_string_data(&writer, io, aid, parent);
         return TRUE;
     }
 
@@ -717,8 +680,8 @@ ril_binder_radio_encode_icc_io(
 }
 
 /**
- * @param serial Serial number of request.
- * @param callInfo CallForwardInfo
+ * @param int32_t Serial number of request.
+ * @param CallForwardInfo
 */
 static
 gboolean
@@ -738,25 +701,22 @@ ril_binder_radio_encode_call_forward_info(
         grilio_parser_get_nullable_utf8(&parser, &number) &&
         grilio_parser_get_int32(&parser, &info->timeSeconds)) {
         GBinderWriter writer;
-        GBinderParent parent;
+        guint parent;
 
-        /* Pointers must be alive for the lifetime of the request */
-        gbinder_local_request_cleanup(out, g_free, info);
-        if (ril_binder_radio_string_init(&info->number, number)) {
-            gbinder_local_request_cleanup(out, g_free, number);
-        }
-
+        /* Initialize the writer and the data to be written */
         gbinder_local_request_init_writer(out, &writer);
+        gbinder_local_request_cleanup(out, g_free, info);
+        ril_binder_radio_take_string(out, &info->number, number);
+
+        /* Write the arguments */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
 
         /* Write the parent structure */
-        parent.index = gbinder_writer_append_buffer_object(&writer,
+        parent = gbinder_writer_append_buffer_object(&writer,
             info, sizeof(*info));
 
-        /* Strings are NULL-terminated, hence len + 1 */
-        parent.offset = G_STRUCT_OFFSET(RadioCallForwardInfo, number.data.str);
-        gbinder_writer_append_buffer_object_with_parent(&writer,
-            info->number.data.str, info->number.len + 1, &parent);
+        /* Write the string data */
+        ril_binder_radio_write_hidl_string_data(&writer, info, number, parent);
         return TRUE;
     }
 
@@ -766,7 +726,7 @@ ril_binder_radio_encode_call_forward_info(
 }
 
 /**
- * @param serial Serial number of request
+ * @param int32_t Serial number of request.
  * @param facility is the facility string code from TS 27.007 7.4
  * @param password is the password, or "" if not required
  * @param serviceClass is the TS 27.007 service class bit vector of services
@@ -834,7 +794,7 @@ ril_binder_radio_encode_get_facility_lock(
 }
 
 /**
- * @param serial Serial number of request.
+ * @param int32_t Serial number of request.
  * @param facility is the facility string code from TS 27.007 7.4
  * @param lockState false for "unlock" and true for "lock"
  * @param password is the password
@@ -908,7 +868,7 @@ ril_binder_radio_encode_set_facility_lock(
 }
 
 /**
- * @param serial Serial number of request.
+ * @param int32_t Serial number of request.
  * @param configInfo Setting of GSM/WCDMA Cell broadcast config
  */
 static
@@ -975,8 +935,8 @@ ril_binder_radio_encode_gsm_broadcast_sms_config(
 }
 
 /**
- * @param serial Serial number of request.
- * @param uiccSub SelectUiccSub as defined in types.hal
+ * @param int32_t Serial number of request.
+ * @param SelectUiccSub as defined in types.hal
  */
 static
 gboolean
@@ -1001,6 +961,66 @@ ril_binder_radio_encode_uicc_sub(
         gbinder_writer_append_buffer_object(&writer, sub, sizeof(*sub));
         return TRUE;
     }
+    return FALSE;
+}
+
+/**
+ * @param int32_t Serial number of request.
+ * @param DataProfileInfo Data profile containing APN settings
+ * @param bool modemCognitive Indicating the data profile was sent to the modem
+ *                       through setDataProfile earlier.
+ * @param bool isRoaming Indicating the device is roaming or not.
+ */
+static
+gboolean
+ril_binder_radio_encode_initial_attach_apn(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    char* apn = NULL;
+    char* proto = NULL;
+    char* username = NULL;
+    char* password = NULL;
+    gint32 auth;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_nullable_utf8(&parser, &apn) &&
+        grilio_parser_get_nullable_utf8(&parser, &proto) &&
+        grilio_parser_get_int32(&parser, &auth) &&
+        grilio_parser_get_nullable_utf8(&parser, &username) &&
+        grilio_parser_get_nullable_utf8(&parser, &password)) {
+        RadioDataProfile* profile;
+        GBinderWriter writer;
+        guint parent;
+
+        /* Initialize the writer and the data to be written */
+        gbinder_local_request_init_writer(out, &writer);
+        profile = gbinder_writer_new0(&writer, RadioDataProfile);
+        ril_binder_radio_take_string(out, &profile->apn, apn);
+        ril_binder_radio_take_string(out, &profile->protocol, proto);
+        ril_binder_radio_take_string(out, &profile->user, username);
+        ril_binder_radio_take_string(out, &profile->password, password);
+        ril_binder_radio_take_string(out, &profile->mvnoMatchData, NULL);
+        profile->roamingProtocol = profile->protocol;
+        profile->authType = auth;
+
+        /* Write the parcel */
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+        parent = gbinder_writer_append_buffer_object(&writer, profile,
+            sizeof(*profile));
+
+        /* Write the string data in the right order*/
+        ril_binder_radio_write_data_profile_strings(&writer, profile, parent);
+        gbinder_writer_append_bool(&writer, FALSE); /* modemCognitive */
+        /* TODO: provide the actual roaming status? */
+        gbinder_writer_append_bool(&writer, FALSE); /* isRoaming */
+        return TRUE;
+    }
+    g_free(apn);
+    g_free(proto);
+    g_free(username);
+    g_free(password);
     return FALSE;
 }
 
@@ -1456,7 +1476,7 @@ ril_binder_radio_decode_operator_info_list(
     if (ops) {
         guint i;
 
-	/* 4 strings per operator */
+        /* 4 strings per operator */
         grilio_encode_int32(out, 4*count);
         for (i = 0; i < count; i++) {
             const RadioOperatorInfo* op = ops + i;
@@ -2460,6 +2480,13 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         ril_binder_radio_encode_ints,
         NULL,
         "setCellInfoListRate"
+    },{
+        RIL_REQUEST_SET_INITIAL_ATTACH_APN,
+        RADIO_REQ_SET_INITIAL_ATTACH_APN,
+        RADIO_RESP_SET_INITIAL_ATTACH_APN,
+        ril_binder_radio_encode_initial_attach_apn,
+        NULL,
+        "setInitialAttachApn"
     },{
         RIL_REQUEST_SET_UICC_SUBSCRIPTION,
         RADIO_REQ_SET_UICC_SUBSCRIPTION,
