@@ -418,6 +418,7 @@ ril_binder_radio_encode_dial(
         gbinder_local_request_init_writer(out, &writer);
         dial = gbinder_writer_new0(&writer, RadioDial);
         ril_binder_radio_take_string(out, &dial->address, number);
+        dial->clir = clir;
 
         /* Write the arguments */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
