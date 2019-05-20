@@ -369,6 +369,7 @@ ril_binder_radio_encode_dial(
         RadioDial* dial = g_new0(RadioDial, 1);
 
         ril_binder_radio_string_init(&dial->address, number);
+        dial->clir = clir;
 
         /* Pointers must be alive for the lifetime of the request */
         gbinder_local_request_cleanup(out, g_free, dial);
