@@ -112,8 +112,10 @@ G_DEFINE_TYPE(RilBinderRadio, ril_binder_radio, GRILIO_TYPE_TRANSPORT)
  *==========================================================================*/
 
 #define ril_binder_radio_write_hidl_string_data(writer,ptr,field,index) \
-    ril_binder_radio_write_string_with_parent(writer, &ptr->field, index, \
-        (guint8*)(&ptr->field) - (guint8*)ptr)
+    ril_binder_radio_write_hidl_string_data2(writer,ptr,field,index,0)
+#define ril_binder_radio_write_hidl_string_data2(writer,ptr,field,index,off) \
+     ril_binder_radio_write_string_with_parent(writer, &ptr->field, index, \
+        (off) + ((guint8*)(&ptr->field) - (guint8*)ptr))
 
 static
 inline
@@ -137,17 +139,31 @@ ril_binder_radio_write_string_with_parent(
 static
 void
 ril_binder_radio_write_data_profile_strings(
-    GBinderWriter* writer,
+    GBinderWriter* w,
     const RadioDataProfile* dp,
-    guint pi)
+    guint idx,
+    guint i)
 {
-    /* Write the string data in the right order*/
-    ril_binder_radio_write_hidl_string_data(writer, dp, apn, pi);
-    ril_binder_radio_write_hidl_string_data(writer, dp, protocol, pi);
-    ril_binder_radio_write_hidl_string_data(writer, dp, roamingProtocol, pi);
-    ril_binder_radio_write_hidl_string_data(writer, dp, user, pi);
-    ril_binder_radio_write_hidl_string_data(writer, dp, password, pi);
-    ril_binder_radio_write_hidl_string_data(writer, dp, mvnoMatchData, pi);
+    const guint off = sizeof(*dp) * i;
+
+    /* Write the string data in the right order */
+    ril_binder_radio_write_hidl_string_data2(w, dp, apn, idx, off);
+    ril_binder_radio_write_hidl_string_data2(w, dp, protocol, idx, off);
+    ril_binder_radio_write_hidl_string_data2(w, dp, roamingProtocol, idx, off);
+    ril_binder_radio_write_hidl_string_data2(w, dp, user, idx, off);
+    ril_binder_radio_write_hidl_string_data2(w, dp, password, idx, off);
+    ril_binder_radio_write_hidl_string_data2(w, dp, mvnoMatchData, idx, off);
+}
+
+inline
+static
+void
+ril_binder_radio_write_single_data_profile(
+    GBinderWriter* writer,
+    const RadioDataProfile* dp)
+{
+    ril_binder_radio_write_data_profile_strings(writer, dp,
+        gbinder_writer_append_buffer_object(writer, dp, sizeof(*dp)), 0);
 }
 
 static
@@ -504,7 +520,8 @@ ril_binder_radio_encode_setup_data_call(
 {
     gboolean ok = FALSE;
     GRilIoParser parser;
-    gint32 count, tech, auth;
+    gint32 count, tech, auth, profile_id;
+    char* profile_str = NULL;
     char* tech_str = NULL;
     char* apn = NULL;
     char* user = NULL;
@@ -516,7 +533,8 @@ ril_binder_radio_encode_setup_data_call(
     if (grilio_parser_get_int32(&parser, &count) && count == 7 &&
         (tech_str = grilio_parser_get_utf8(&parser)) != NULL &&
         gutil_parse_int(tech_str, 10, &tech) &&
-        grilio_parser_skip_string(&parser) &&
+        (profile_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(profile_str, 10, &profile_id) &&
         (apn = grilio_parser_get_utf8(&parser)) != NULL &&
         (user = grilio_parser_get_utf8(&parser)) != NULL &&
         (password = grilio_parser_get_utf8(&parser)) != NULL &&
@@ -524,7 +542,6 @@ ril_binder_radio_encode_setup_data_call(
         gutil_parse_int(auth_str, 10, &auth) &&
         (proto = grilio_parser_get_utf8(&parser)) != NULL) {
         GBinderWriter writer;
-        guint parent;
         RadioDataProfile* profile;
 
         /* ril.h has this to say about the radio tech parameter:
@@ -548,14 +565,17 @@ ril_binder_radio_encode_setup_data_call(
         ril_binder_radio_take_string(out, &profile->password, password);
         ril_binder_radio_take_string(out, &profile->mvnoMatchData, NULL);
         profile->roamingProtocol = profile->protocol;
+        profile->profileId = profile_id;
         profile->authType = auth;
+        profile->enabled = TRUE;
+        profile->supportedApnTypesBitmap =
+            (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
+                RADIO_APN_TYPE_DEFAULT : RADIO_APN_TYPE_MMS;
 
         /* Write the parcel */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
         gbinder_writer_append_int32(&writer, tech); /* radioTechnology */
-        parent = gbinder_writer_append_buffer_object(&writer,
-            profile, sizeof(*profile));             /* dataProfileInfo */
-        ril_binder_radio_write_data_profile_strings(&writer, profile, parent);
+        ril_binder_radio_write_single_data_profile(&writer, profile);
         gbinder_writer_append_bool(&writer, FALSE); /* modemCognitive */
         /* TODO: provide the actual roaming status? */
         gbinder_writer_append_bool(&writer, TRUE);  /* roamingAllowed */
@@ -568,6 +588,7 @@ ril_binder_radio_encode_setup_data_call(
         g_free(proto);
     }
 
+    g_free(profile_str);
     g_free(tech_str);
     g_free(auth_str);
     return ok;
@@ -993,7 +1014,6 @@ ril_binder_radio_encode_initial_attach_apn(
         grilio_parser_get_nullable_utf8(&parser, &password)) {
         RadioDataProfile* profile;
         GBinderWriter writer;
-        guint parent;
 
         /* Initialize the writer and the data to be written */
         gbinder_local_request_init_writer(out, &writer);
@@ -1005,23 +1025,120 @@ ril_binder_radio_encode_initial_attach_apn(
         ril_binder_radio_take_string(out, &profile->mvnoMatchData, NULL);
         profile->roamingProtocol = profile->protocol;
         profile->authType = auth;
+        profile->supportedApnTypesBitmap = RADIO_APN_TYPE_IA;
+        profile->enabled = TRUE;
 
-        /* Write the parcel */
+        /* int32_t serial */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
-        parent = gbinder_writer_append_buffer_object(&writer, profile,
-            sizeof(*profile));
-
-        /* Write the string data in the right order*/
-        ril_binder_radio_write_data_profile_strings(&writer, profile, parent);
-        gbinder_writer_append_bool(&writer, FALSE); /* modemCognitive */
+        /* DataProfileInfo dataProfileInfo */
+        ril_binder_radio_write_single_data_profile(&writer, profile);
+        /* bool modemCognitive */
+        gbinder_writer_append_bool(&writer, FALSE);
+        /* bool isRoaming */
         /* TODO: provide the actual roaming status? */
-        gbinder_writer_append_bool(&writer, FALSE); /* isRoaming */
+        gbinder_writer_append_bool(&writer, FALSE);
         return TRUE;
     }
     g_free(apn);
     g_free(proto);
     g_free(username);
     g_free(password);
+    return FALSE;
+}
+
+/**
+ * @param int32_t Serial number of request.
+ * @param vec<DataProfileInfo> Array of DataProfiles to set.
+ * @param bool Indicating the device is roaming or not.
+ */
+static
+gboolean
+ril_binder_radio_encode_data_profiles(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    guint32 n;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_uint32(&parser, &n)) {
+        guint i;
+        GBinderWriter writer;
+        GBinderHidlVec* vec;
+        RadioDataProfile* profiles;
+
+        gbinder_local_request_init_writer(out, &writer);
+        profiles = gbinder_writer_malloc0(&writer, sizeof(*profiles) * n);
+        vec = gbinder_writer_new0(&writer, GBinderHidlVec);
+        vec->data.ptr = profiles;
+        vec->count = n;
+        vec->owns_buffer = TRUE;
+
+        for (i = 0; i < n; i++) {
+            RadioDataProfile* dp = profiles + i;
+            gint32 profile_id, auth_type, enabled;
+            char* apn = NULL;
+            char* proto = NULL;
+            char* username = NULL;
+            char* password = NULL;
+
+            if (grilio_parser_get_int32(&parser, &profile_id) &&
+                grilio_parser_get_nullable_utf8(&parser, &apn) &&
+                grilio_parser_get_nullable_utf8(&parser, &proto) &&
+                grilio_parser_get_int32(&parser, &auth_type) &&
+                grilio_parser_get_nullable_utf8(&parser, &username) &&
+                grilio_parser_get_nullable_utf8(&parser, &password) &&
+                grilio_parser_get_int32(&parser, &dp->type) &&
+                grilio_parser_get_int32(&parser, &dp->maxConnsTime) &&
+                grilio_parser_get_int32(&parser, &dp->maxConns) &&
+                grilio_parser_get_int32(&parser, &dp->waitTime) &&
+                grilio_parser_get_int32(&parser, &enabled)) {
+                /* Fill in the profile */
+                ril_binder_radio_take_string(out, &dp->apn, apn);
+                ril_binder_radio_take_string(out, &dp->protocol, proto);
+                ril_binder_radio_take_string(out, &dp->user, username);
+                ril_binder_radio_take_string(out, &dp->password, password);
+                ril_binder_radio_take_string(out, &dp->mvnoMatchData, NULL);
+                dp->roamingProtocol = dp->protocol;
+                dp->profileId = profile_id;
+                dp->authType = auth_type;
+                dp->enabled = enabled;
+                dp->supportedApnTypesBitmap =
+                    (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
+                        (RADIO_APN_TYPE_DEFAULT | RADIO_APN_TYPE_SUPL |
+                         RADIO_APN_TYPE_IA) : RADIO_APN_TYPE_MMS;
+            } else {
+                g_free(apn);
+                g_free(proto);
+                g_free(username);
+                g_free(password);
+                break;
+            }
+        }
+
+        if (i == n) {
+            guint index;
+            GBinderParent parent;
+
+            /* int32_t serial */
+            gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+
+            /* vec<DataProfileInfo> profiles */
+            parent.offset = GBINDER_HIDL_VEC_BUFFER_OFFSET;
+            parent.index = gbinder_writer_append_buffer_object(&writer,
+                vec, sizeof(*vec));
+            index = gbinder_writer_append_buffer_object_with_parent(&writer,
+                profiles, sizeof(*profiles) * n, &parent);
+            for (i = 0; i < n; i++) {
+                ril_binder_radio_write_data_profile_strings(&writer,
+                    profiles + i, index, i);
+            }
+
+            /* bool isRoaming */
+            gbinder_writer_append_bool(&writer, FALSE);
+            return TRUE;
+        }
+    }
     return FALSE;
 }
 
@@ -2502,6 +2619,13 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         ril_binder_radio_encode_bool,
         NULL,
         "setDataAllowed"
+    },{
+        RIL_REQUEST_SET_DATA_PROFILE,
+        RADIO_REQ_SET_DATA_PROFILE,
+        RADIO_RESP_SET_DATA_PROFILE,
+        ril_binder_radio_encode_data_profiles,
+        NULL,
+        "setDataProfile"
     },{
         RIL_RESPONSE_ACKNOWLEDGEMENT,
         RADIO_REQ_RESPONSE_ACKNOWLEDGEMENT,
