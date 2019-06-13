@@ -7,11 +7,16 @@ License: BSD
 URL: https://github.com/mer-hybris/ofono-ril-binder-plugin
 Source: %{name}-%{version}.tar.bz2
 
-Requires: ofono >= 1.21+git42
-Requires: libgrilio >= 1.0.26
+%define ofono_version 1.21+git42
+%define libgrilio_version 1.0.26
+%define libgbinder_version 1.0.23
+%define libgbinder_radio_version 1.0.4
+
 Requires: libgrilio-binder >= 1.0.4
-BuildRequires: ofono-devel >= 1.21+git42
-BuildRequires: pkgconfig(libgrilio) >= 1.0.26
+Requires: ofono >= %{ofono_version}
+Requires: libgrilio >= %{libgrilio_version}
+BuildRequires: ofono-devel >= %{ofono_version}
+BuildRequires: pkgconfig(libgrilio) >= %{libgrilio_version}
 
 %define plugin_dir %{_libdir}/ofono/plugins
 
@@ -43,9 +48,10 @@ Summary: Binder based transport for libgrilio
 Group: Development/Libraries
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
-Requires: libgbinder >= 1.0.23
-Requires: libgbinder-radio >= 1.0.4
-BuildRequires: pkgconfig(libgbinder-radio) >= 1.0.4
+Requires: ofono >= %{ofono_version}
+Requires: libgbinder >= %{libgbinder_version}
+Requires: libgbinder-radio >= %{libgbinder_radio_version}
+BuildRequires: pkgconfig(libgbinder-radio) >= %{libgbinder_radio_version}
 
 %description -n libgrilio-binder
 Provides binder based transport for libgrilio
@@ -53,9 +59,9 @@ Provides binder based transport for libgrilio
 %package -n libgrilio-binder-devel
 Summary: Development library for libgrilio-binder
 Requires: pkgconfig(glib-2.0)
-Requires: pkgconfig(libgrilio) >= 1.0.26
-Requires: pkgconfig(libgbinder) >= 1.0.23
-Requires: pkgconfig(libgbinder-radio) >= 1.0.4
+Requires: pkgconfig(libgrilio) >= %{libgrilio_version}
+Requires: pkgconfig(libgbinder) >= %{libgbinder_version}
+Requires: pkgconfig(libgbinder-radio) >= %{libgbinder_radio_version}
 Requires: libgrilio-binder = %{version}
 Requires: pkgconfig
 
