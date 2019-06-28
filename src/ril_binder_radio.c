@@ -36,6 +36,7 @@
 #include <ofono/ril-constants.h>
 #include <ofono/log.h>
 
+#include "grilio_channel.h"
 #include "grilio_encode.h"
 #include "grilio_parser.h"
 #include "grilio_request.h"
@@ -2918,6 +2919,18 @@ ril_binder_radio_radio_died(
     grilio_transport_signal_disconnected(transport);
 }
 
+static
+void
+ril_binder_radio_enabled_changed(
+    GRilIoChannel* channel,
+    void* user_data)
+{
+    RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
+
+    DBG_(self, "%sabled", channel->enabled ? "en" : "dis");
+    radio_instance_set_enabled(self->radio, channel->enabled);
+}
+
 /*==========================================================================*
  * Methods
  *==========================================================================*/
@@ -3036,6 +3049,32 @@ ril_binder_radio_shutdown(
     ril_binder_radio_drop_radio(self);
     if (was_connected) {
         grilio_transport_signal_disconnected(transport);
+    }
+}
+
+static
+void
+ril_binder_radio_set_channel(
+    GRilIoTransport* transport,
+    GRilIoChannel* channel)
+{
+    GRilIoTransportClass* klass = GRILIO_TRANSPORT_CLASS(PARENT_CLASS);
+    RilBinderRadio* self = RIL_BINDER_RADIO(transport);
+
+    if (channel) {
+        /*
+         * N.B. There's no need to remove this handler (and therefore keep
+         * its id) because set_channel(NULL) will be invoked from channel's
+         * finalize method when all signal connections have already been
+         * killed and this id would no longer be valid anyway.
+         */
+        grilio_channel_add_enabled_changed_handler(channel,
+            ril_binder_radio_enabled_changed, self);
+        klass->set_channel(transport, channel);
+        radio_instance_set_enabled(self->radio, channel->enabled);
+    } else {
+        radio_instance_set_enabled(self->radio, FALSE);
+        klass->set_channel(transport, NULL);
     }
 }
 
@@ -3290,11 +3329,12 @@ void
 ril_binder_radio_class_init(
     RilBinderRadioClass* klass)
 {
-    GRilIoTransportClass* parent = &klass->parent;
+    GRilIoTransportClass* transport = GRILIO_TRANSPORT_CLASS(klass);
 
-    parent->ril_version_offset = 100;
-    parent->send = ril_binder_radio_send;
-    parent->shutdown = ril_binder_radio_shutdown;
+    transport->ril_version_offset = 100;
+    transport->send = ril_binder_radio_send;
+    transport->shutdown = ril_binder_radio_shutdown;
+    transport->set_channel = ril_binder_radio_set_channel;
     klass->handle_response = ril_binder_radio_handle_response;
     klass->handle_indication = ril_binder_radio_handle_indication;
     g_type_class_add_private(klass, sizeof(RilBinderRadioPriv));
