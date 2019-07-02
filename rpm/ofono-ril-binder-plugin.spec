@@ -1,5 +1,5 @@
 Name: ofono-ril-binder-plugin
-Version: 1.0.7
+Version: 1.0.8
 Release: 1
 Summary: Ofono RIL binder transport plugin
 Group: Development/Libraries
@@ -8,9 +8,9 @@ URL: https://github.com/mer-hybris/ofono-ril-binder-plugin
 Source: %{name}-%{version}.tar.bz2
 
 %define ofono_version 1.21+git42
-%define libgrilio_version 1.0.26
+%define libgrilio_version 1.0.35
 %define libgbinder_version 1.0.23
-%define libgbinder_radio_version 1.0.4
+%define libgbinder_radio_version 1.0.7
 
 Requires: libgrilio-binder >= 1.0.4
 Requires: ofono >= %{ofono_version}
