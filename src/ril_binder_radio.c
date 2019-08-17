@@ -892,6 +892,66 @@ ril_binder_radio_encode_set_facility_lock(
 
 /**
  * @param int32_t Serial number of request.
+ * @param DeviceStateType The updated device state type.
+ * @param bool The updated state.
+ */
+static
+void
+ril_binder_radio_device_state_req(
+    GBinderLocalRequest* req,
+    guint32 serial,
+    RADIO_DEVICE_STATE type,
+    gboolean state)
+{
+    GBinderWriter writer;
+
+    gbinder_local_request_init_writer(req, &writer);
+    gbinder_writer_append_int32(&writer, serial);
+    gbinder_writer_append_int32(&writer, type);
+    gbinder_writer_append_bool(&writer, state);
+}
+
+static
+gboolean
+ril_binder_radio_map_screen_state_to_device_state(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    gint32 count, value;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &count) && count == 1 &&
+        grilio_parser_get_int32(&parser, &value)) {
+        ril_binder_radio_device_state_req(out, grilio_request_serial(in),
+            RADIO_DEVICE_STATE_POWER_SAVE_MODE, !value);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static
+gboolean
+ril_binder_radio_encode_device_state(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    gint32 count, type, state;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &count) && count == 2 &&
+        grilio_parser_get_int32(&parser, &type) &&
+        grilio_parser_get_int32(&parser, &state)) {
+        ril_binder_radio_device_state_req(out, grilio_request_serial(in),
+            type, state);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/**
+ * @param int32_t Serial number of request.
  * @param configInfo Setting of GSM/WCDMA Cell broadcast config
  */
 static
@@ -2531,11 +2591,17 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         "getPreferredNetworkType"
     },{
         RIL_REQUEST_SCREEN_STATE, /* deprecated on 2017-01-10 */
-        RADIO_REQ_SET_LOCATION_UPDATES,
-        RADIO_RESP_SET_LOCATION_UPDATES,
-        ril_binder_radio_encode_bool,
+        RADIO_REQ_SEND_DEVICE_STATE,
+        /*
+         * No resp_tx here, the one for RIL_REQUEST_SEND_DEVICE_STATE
+         * will be used to handle the response. Both SCREEN_STATE and
+         * SEND_DEVICE_STATE responses carry no payload and therefore
+         * are processed identically. It's still a bit of a hack though :/
+         */
+        RADIO_RESP_NONE,
+        ril_binder_radio_map_screen_state_to_device_state,
         NULL,
-        "setLocationUpdates"
+        "sendDeviceState"
     },{
         RIL_REQUEST_SET_LOCATION_UPDATES,
         RADIO_REQ_SET_LOCATION_UPDATES,
@@ -2627,6 +2693,13 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         ril_binder_radio_encode_data_profiles,
         NULL,
         "setDataProfile"
+    },{
+        RIL_REQUEST_SEND_DEVICE_STATE,
+        RADIO_REQ_SEND_DEVICE_STATE,
+        RADIO_RESP_SEND_DEVICE_STATE,
+        ril_binder_radio_encode_device_state,
+        NULL,
+        "sendDeviceState"
     },{
         RIL_RESPONSE_ACKNOWLEDGEMENT,
         RADIO_REQ_RESPONSE_ACKNOWLEDGEMENT,
