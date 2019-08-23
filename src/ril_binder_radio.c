@@ -2701,6 +2701,13 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         NULL,
         "sendDeviceState"
     },{
+        RIL_REQUEST_SET_UNSOLICITED_RESPONSE_FILTER,
+        RADIO_REQ_SET_INDICATION_FILTER,
+        RADIO_RESP_SET_INDICATION_FILTER,
+        ril_binder_radio_encode_ints,
+        NULL,
+        "setIndicationFilter"
+    },{
         RIL_RESPONSE_ACKNOWLEDGEMENT,
         RADIO_REQ_RESPONSE_ACKNOWLEDGEMENT,
         RADIO_RESP_NONE,
