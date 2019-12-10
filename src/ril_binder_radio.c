@@ -1203,6 +1203,55 @@ ril_binder_radio_encode_data_profiles(
     return FALSE;
 }
 
+/**
+ * @param int32_t Serial number of request.
+ * @param RadioCapability structure to be set
+ */
+static
+gboolean
+ril_binder_radio_encode_radio_capability(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    char* uuid = NULL;
+    gint32 version, session, phase, raf, status;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &version) &&
+        grilio_parser_get_int32(&parser, &session) &&
+        grilio_parser_get_int32(&parser, &phase) &&
+        grilio_parser_get_int32(&parser, &raf) &&
+        (uuid = grilio_parser_get_utf8(&parser)) != NULL &&
+        grilio_parser_get_int32(&parser, &status)) {
+        GBinderWriter writer;
+        RadioCapability* rc;
+        guint index;
+
+        /* Initialize the writer and the data to be written */
+        gbinder_local_request_init_writer(out, &writer);
+        rc = gbinder_writer_new0(&writer, RadioCapability);
+        ril_binder_radio_take_string(out, &rc->logicalModemUuid, uuid);
+        rc->session = session;
+        rc->phase = phase;
+        rc->raf = raf;
+        rc->status = status;
+
+        /* Write the arguments */
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+
+        /* Write the parent structure */
+        index = gbinder_writer_append_buffer_object(&writer, rc, sizeof(*rc));
+
+        /* Write the string data */
+        ril_binder_radio_write_hidl_string_data(&writer, rc, logicalModemUuid,
+            index);
+        return TRUE;
+    }
+    g_free(uuid);
+    return FALSE;
+}
+
 /*==========================================================================*
  * Decoders (binder -> plugin)
  *==========================================================================*/
@@ -2150,6 +2199,30 @@ ril_binder_radio_decode_cell_info_list(
     return ok;
 }
 
+/**
+ * @param rc Radio capability as defined by RadioCapability
+ */
+static
+gboolean
+ril_binder_radio_decode_radio_capability(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    const RadioCapability* rc = gbinder_reader_read_hidl_struct
+        (in, RadioCapability);
+
+    if (rc) {
+        grilio_encode_int32(out, 1 /* RIL_RADIO_CAPABILITY_VERSION */);
+        grilio_encode_int32(out, rc->session);
+        grilio_encode_int32(out, rc->phase);
+        grilio_encode_int32(out, rc->raf);
+        grilio_encode_utf8(out, rc->logicalModemUuid.data.str);
+        grilio_encode_int32(out, rc->status);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 /*==========================================================================*
  * Calls
  *==========================================================================*/
@@ -2693,6 +2766,20 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         ril_binder_radio_encode_data_profiles,
         NULL,
         "setDataProfile"
+    },{
+        RIL_REQUEST_GET_RADIO_CAPABILITY,
+        RADIO_REQ_GET_RADIO_CAPABILITY,
+        RADIO_RESP_GET_RADIO_CAPABILITY,
+        ril_binder_radio_encode_serial,
+        ril_binder_radio_decode_radio_capability,
+        "getRadioCapability"
+    },{
+        RIL_REQUEST_SET_RADIO_CAPABILITY,
+        RADIO_REQ_SET_RADIO_CAPABILITY,
+        RADIO_RESP_SET_RADIO_CAPABILITY,
+        ril_binder_radio_encode_radio_capability,
+        ril_binder_radio_decode_radio_capability,
+        "setRadioCapability"
     },{
         RIL_REQUEST_SEND_DEVICE_STATE,
         RADIO_REQ_SEND_DEVICE_STATE,
