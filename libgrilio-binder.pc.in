@@ -5,6 +5,6 @@ includedir=/usr/include
 Name: libgrilio-binder
 Description: Binder based transport for libgrilio
 Version: [version]
-Requires: glib-2.0 libgrilio libglibutil libgbinder-radio libgbinder
+Requires.private: glib-2.0 libgrilio libglibutil libgbinder-radio libgbinder
 Libs: -L${libdir} -l${name}
 Cflags: -I${includedir} -I${includedir}/${name}
