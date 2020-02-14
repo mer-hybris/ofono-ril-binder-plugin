@@ -30,6 +30,8 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define GLIB_DISABLE_DEPRECATION_WARNINGS
+
 #include "ril_binder_radio.h"
 #include "ril_binder_radio_impl.h"
 
