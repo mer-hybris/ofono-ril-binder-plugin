@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2018-2019 Jolla Ltd.
- * Copyright (C) 2018-2019 Slava Monich <slava.monich@jolla.com>
+ * Copyright (C) 2018-2020 Jolla Ltd.
+ * Copyright (C) 2018-2020 Slava Monich <slava.monich@jolla.com>
  *
  * You may use this file under the terms of BSD license as follows:
  *
@@ -2200,6 +2200,29 @@ ril_binder_radio_decode_cell_info_list(
 }
 
 /**
+ * @param bool true = registered, false = not registered
+ * @param RadioTechnologyFamily (int32).
+ */
+static
+gboolean
+ril_binder_radio_decode_ims_registration_state(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean reg;
+    gint32 family;
+
+    if (gbinder_reader_read_bool(in, &reg) &&
+        gbinder_reader_read_int32(in, &family)) {
+        grilio_encode_int32(out, 2); /* Number of ints to follow */
+        grilio_encode_int32(out, reg);
+        grilio_encode_int32(out, family);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/**
  * @param rc Radio capability as defined by RadioCapability
  */
 static
@@ -2746,6 +2769,13 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
         NULL,
         "setInitialAttachApn"
     },{
+        RIL_REQUEST_IMS_REGISTRATION_STATE,
+        RADIO_REQ_GET_IMS_REGISTRATION_STATE,
+        RADIO_RESP_GET_IMS_REGISTRATION_STATE,
+        ril_binder_radio_encode_serial,
+        ril_binder_radio_decode_ims_registration_state,
+        "getImsRegistrationState"
+    },{
         RIL_REQUEST_SET_UICC_SUBSCRIPTION,
         RADIO_REQ_SET_UICC_SUBSCRIPTION,
         RADIO_RESP_SET_UICC_SUBSCRIPTION,
@@ -2909,6 +2939,11 @@ static const RilBinderRadioEvent ril_binder_radio_events[] = {
         RADIO_IND_CELL_INFO_LIST,
         ril_binder_radio_decode_cell_info_list,
         "cellInfoList"
+    },{
+        RIL_UNSOL_RESPONSE_IMS_NETWORK_STATE_CHANGED,
+        RADIO_IND_IMS_NETWORK_STATE_CHANGED,
+        NULL,
+        "imsNetworkStateChanged"
     },{
         RIL_UNSOL_UICC_SUBSCRIPTION_STATUS_CHANGED,
         RADIO_IND_SUBSCRIPTION_STATUS_CHANGED,
