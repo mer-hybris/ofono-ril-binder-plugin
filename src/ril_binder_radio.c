@@ -36,7 +36,6 @@
 #include "ril_binder_radio_impl.h"
 
 #include <ofono/ril-constants.h>
-#include <ofono/log.h>
 
 #include "grilio_channel.h"
 #include "grilio_encode.h"
@@ -3030,7 +3029,7 @@ ril_binder_radio_handle_known_response(
     if (ril_binder_radio_decode_response(self, info, call->decode, reader)) {
         return TRUE;
     } else {
-        ofono_warn("Failed to decode %s response", call->name);
+        GWARN("Failed to decode %s response", call->name);
         return FALSE;
     }
 }
@@ -3047,7 +3046,7 @@ ril_binder_radio_handle_known_indication(
         event->decode, reader)) {
         return TRUE;
     } else {
-        ofono_warn("Failed to decode %s indication", event->name);
+        GWARN("Failed to decode %s indication", event->name);
         return FALSE;
     }
 }
@@ -3118,7 +3117,7 @@ ril_binder_radio_radio_died(
     RilBinderRadio* self = RIL_BINDER_RADIO(user_data);
     GRilIoTransport* transport = &self->parent;
 
-    ofono_error("%sradio died", transport->log_prefix);
+    GERR("%sradio died", transport->log_prefix);
     ril_binder_radio_drop_radio(self);
     grilio_transport_signal_disconnected(transport);
 }
@@ -3160,7 +3159,7 @@ ril_binder_radio_handle_response(
         return ril_binder_radio_handle_known_response(self, call, info, &copy);
     } else {
         DBG_(self, "IRadioResponse %u", code);
-        ofono_warn("Unexpected response transaction %u", code);
+        GWARN("Unexpected response transaction %u", code);
         return FALSE;
     }
 }
@@ -3230,11 +3229,11 @@ ril_binder_radio_send(
                 return GRILIO_SEND_OK;
             }
         } else {
-            ofono_warn("Failed to encode %s() arguments", call->name);
+            GWARN("Failed to encode %s() arguments", call->name);
         }
         gbinder_local_request_unref(txreq);
     } else {
-        ofono_warn("Unknown RIL command %u", code);
+        GWARN("Unknown RIL command %u", code);
     }
 
     /* All kinds of failures are mapped to RIL_E_GENERIC_FAILURE */
@@ -3447,7 +3446,8 @@ ril_binder_radio_init_base(
     const char* dev = ril_binder_radio_arg_dev(args);
     const char* name = ril_binder_radio_arg_name(args);
 
-    DBG("%s %s %s", modem, dev, name);
+    GDEBUG("%s %s %s %s", self->parent.log_prefix,
+        ril_binder_radio_arg_modem(args), dev, name);
 
     self->modem = priv->modem = g_strdup(modem);
     self->radio = radio_instance_new(dev, name);
