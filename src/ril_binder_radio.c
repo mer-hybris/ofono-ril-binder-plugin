@@ -93,7 +93,6 @@ typedef struct ril_binder_radio_failure_data {
 } RilBinderRadioFailureData;
 
 struct ril_binder_radio_priv {
-    char* modem;
     GUtilIdleQueue* idle;
     GHashTable* req_map;      /* code -> RilBinderRadioCall */
     GHashTable* resp_map;     /* resp_tx -> RilBinderRadioCall */
@@ -3442,14 +3441,11 @@ ril_binder_radio_init_base(
     GHashTable* args)
 {
     RilBinderRadioPriv* priv = self->priv;
-    const char* modem = ril_binder_radio_arg_modem(args);
     const char* dev = ril_binder_radio_arg_dev(args);
     const char* name = ril_binder_radio_arg_name(args);
 
     GDEBUG("%s %s %s %s", self->parent.log_prefix,
         ril_binder_radio_arg_modem(args), dev, name);
-
-    self->modem = priv->modem = g_strdup(modem);
     self->radio = radio_instance_new(dev, name);
     if (self->radio) {
         priv->radio_event_id[RADIO_EVENT_INDICATION] =
@@ -3524,7 +3520,6 @@ ril_binder_radio_finalize(
     if (priv->buf) {
         g_byte_array_unref(priv->buf);
     }
-    g_free(priv->modem);
     G_OBJECT_CLASS(PARENT_CLASS)->finalize(object);
 }
 
