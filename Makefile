@@ -65,6 +65,7 @@ PLUGIN_SRC = \
   ril_binder_plugin.c
 
 LIB_SRC = \
+  ril_binder_oemhook.c \
   ril_binder_radio.c
 
 #
