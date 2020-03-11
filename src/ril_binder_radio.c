@@ -34,6 +34,8 @@
 
 #include "ril_binder_radio.h"
 #include "ril_binder_radio_impl.h"
+#include "ril_binder_oemhook.h"
+#include "ril_binder_log.h"
 
 #include <ofono/ril-constants.h>
 
@@ -51,8 +53,6 @@
 #include <gutil_misc.h>
 
 /* Logging */
-#define GLOG_MODULE_NAME ril_binder_radio_log
-#include <gutil_log.h>
 GLOG_MODULE_DEFINE("grilio-binder");
 
 #define RIL_BINDER_KEY_MODEM      "modem"
@@ -93,6 +93,8 @@ typedef struct ril_binder_radio_failure_data {
 } RilBinderRadioFailureData;
 
 struct ril_binder_radio_priv {
+    RilBinderOemHook* oemhook;
+    gulong oemhook_raw_response_id;
     GUtilIdleQueue* idle;
     GHashTable* req_map;      /* code -> RilBinderRadioCall */
     GHashTable* resp_map;     /* resp_tx -> RilBinderRadioCall */
@@ -3015,6 +3017,13 @@ ril_binder_radio_drop_radio(
         radio_instance_unref(self->radio);
         self->radio = NULL;
     }
+    if (priv->oemhook) {
+        ril_binder_oemhook_remove_handler(priv->oemhook,
+            priv->oemhook_raw_response_id);
+        priv->oemhook_raw_response_id = 0;
+        ril_binder_oemhook_free(priv->oemhook);
+        priv->oemhook = NULL;
+    }
 }
 
 static
@@ -3133,6 +3142,39 @@ ril_binder_radio_enabled_changed(
     radio_instance_set_enabled(self->radio, channel->enabled);
 }
 
+static
+GRILIO_RESPONSE_TYPE
+ril_binder_radio_convert_resp_type(
+    RADIO_RESP_TYPE type)
+{
+    switch (type) {
+    case RADIO_RESP_SOLICITED:
+        return GRILIO_RESPONSE_SOLICITED;
+    case RADIO_RESP_SOLICITED_ACK:
+        return GRILIO_RESPONSE_SOLICITED_ACK;
+    case RADIO_RESP_SOLICITED_ACK_EXP:
+        return GRILIO_RESPONSE_SOLICITED_ACK_EXP;
+    }
+    GDEBUG("Unexpected response type %u", type);
+    return GRILIO_RESPONSE_NONE;
+}
+
+static
+void
+ril_binder_radio_handle_oemhook_raw_response(
+    RilBinderOemHook* hook,
+    const RadioResponseInfo* info,
+    const GUtilData* data,
+    gpointer user_data)
+{
+    GRILIO_RESPONSE_TYPE type = ril_binder_radio_convert_resp_type(info->type);
+
+    if (type != GRILIO_RESPONSE_NONE) {
+        grilio_transport_signal_response(GRILIO_TRANSPORT(user_data), type,
+            info->serial, info->error, data->bytes, data->size);
+    }
+}
+
 /*==========================================================================*
  * Methods
  *==========================================================================*/
@@ -3231,6 +3273,18 @@ ril_binder_radio_send(
             GWARN("Failed to encode %s() arguments", call->name);
         }
         gbinder_local_request_unref(txreq);
+    } else if (code == RIL_REQUEST_OEM_HOOK_RAW) {
+        /*
+         * This needs to be special-cased, because OEM_HOOK functionality
+         * was moved to separate IOemHook interface.
+         */
+        if (priv->oemhook) {
+            if (ril_binder_oemhook_send_request_raw(priv->oemhook, req)) {
+                return GRILIO_SEND_OK;
+            }
+        } else {
+            GWARN("No OEM hook to handle OEM_HOOK_RAW request");
+        }
     } else {
         GWARN("Unknown RIL command %u", code);
     }
@@ -3324,23 +3378,8 @@ ril_binder_radio_decode_response(
     g_byte_array_set_size(buf, 0);
     if (!decode || decode(reader, buf)) {
         GRilIoTransport* transport = &self->parent;
-        GRILIO_RESPONSE_TYPE type;
-
-        switch (info->type) {
-        default:
-            DBG_(self, "Unexpected response type %u", info->type);
-            type = GRILIO_RESPONSE_NONE;
-            break;
-        case RADIO_RESP_SOLICITED:
-            type = GRILIO_RESPONSE_SOLICITED;
-            break;
-        case RADIO_RESP_SOLICITED_ACK:
-            type = GRILIO_RESPONSE_SOLICITED_ACK;
-            break;
-        case RADIO_RESP_SOLICITED_ACK_EXP:
-            type = GRILIO_RESPONSE_SOLICITED_ACK_EXP;
-            break;
-        }
+        GRILIO_RESPONSE_TYPE type = ril_binder_radio_convert_resp_type
+            (info->type);
 
         if (type != GRILIO_RESPONSE_NONE) {
             grilio_transport_signal_response(transport, type, info->serial,
@@ -3448,6 +3487,15 @@ ril_binder_radio_init_base(
         ril_binder_radio_arg_modem(args), dev, name);
     self->radio = radio_instance_new(dev, name);
     if (self->radio) {
+        GBinderServiceManager* sm = gbinder_servicemanager_new(dev);
+
+        priv->oemhook = ril_binder_oemhook_new(sm, self->radio);
+        if (priv->oemhook) {
+            priv->oemhook_raw_response_id =
+                ril_binder_oemhook_add_raw_response_handler(priv->oemhook,
+                    ril_binder_radio_handle_oemhook_raw_response, self);
+        }
+
         priv->radio_event_id[RADIO_EVENT_INDICATION] =
             radio_instance_add_indication_handler(self->radio, RADIO_IND_ANY,
                 ril_binder_radio_indication_handler, self);
@@ -3460,6 +3508,7 @@ ril_binder_radio_init_base(
         priv->radio_event_id[RADIO_EVENT_DEATH] =
             radio_instance_add_death_handler(self->radio,
                 ril_binder_radio_radio_died, self);
+        gbinder_servicemanager_unref(sm);
         return TRUE;
     }
     return FALSE;
