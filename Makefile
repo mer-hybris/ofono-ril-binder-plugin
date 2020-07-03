@@ -119,10 +119,7 @@ LIB_FULL_CFLAGS = $(LIB_BASE_FLAGS) $(BASE_CFLAGS) \
 LIB_FULL_LDFLAGS = $(LIB_BASE_FLAGS) $(LDFLAGS) -shared \
   -Wl,-soname,$(LIB_SONAME) $(shell pkg-config --libs $(LIB_PKGS)) -lpthread
 
-ifndef KEEP_SYMBOLS
-KEEP_SYMBOLS = 0
-endif
-
+KEEP_SYMBOLS ?= 0
 ifneq ($(KEEP_SYMBOLS),0)
 RELEASE_FLAGS += -g
 endif
@@ -246,8 +243,16 @@ ifeq ($(KEEP_SYMBOLS),0)
 	strip $@
 endif
 
+#
+# LIBDIR usually gets substituted with arch specific dir.
+# It could be relative or absolute.
+#
+
+LIBDIR ?= usr/lib
+ABS_LIBDIR := $(shell echo /$(LIBDIR) | sed -r 's|/+|/|g')
+
 $(PKGCONFIG): $(LIB_NAME).pc.in Makefile
-	sed -e 's/\[version\]/'$(PCVERSION)/g $< > $@
+	sed -e 's|@version@|$(PCVERSION)|g' -e 's|@libdir@|$(ABS_LIBDIR)|g' $< > $@
 
 #
 # Install
@@ -255,17 +260,16 @@ $(PKGCONFIG): $(LIB_NAME).pc.in Makefile
 
 INSTALL = install
 INSTALL_DIRS = $(INSTALL) -d
-INSTALL_LIBS = $(INSTALL) -m 755
 INSTALL_FILES = $(INSTALL) -m 644
 
-INSTALL_LIB_DIR = $(DESTDIR)/usr/lib
 INSTALL_PLUGIN_DIR = $(DESTDIR)/usr/lib/ofono/plugins
 INSTALL_INCLUDE_DIR = $(DESTDIR)/usr/include/$(NAME)
-INSTALL_PKGCONFIG_DIR = $(DESTDIR)/usr/lib/pkgconfig
+INSTALL_LIB_DIR = $(DESTDIR)$(ABS_LIBDIR)
+INSTALL_PKGCONFIG_DIR = $(DESTDIR)$(ABS_LIBDIR)/pkgconfig
 
 install: $(INSTALL_LIB_DIR) $(INSTALL_PLUGIN_DIR)
-	$(INSTALL_LIBS) $(RELEASE_PLUGIN) $(INSTALL_PLUGIN_DIR)
-	$(INSTALL_LIBS) $(RELEASE_LIB) $(INSTALL_LIB_DIR)
+	$(INSTALL_FILES) $(RELEASE_PLUGIN) $(INSTALL_PLUGIN_DIR)
+	$(INSTALL_FILES) $(RELEASE_LIB) $(INSTALL_LIB_DIR)
 	ln -sf $(LIB_SO) $(INSTALL_LIB_DIR)/$(LIB_SYMLINK2)
 	ln -sf $(LIB_SYMLINK2) $(INSTALL_LIB_DIR)/$(LIB_SYMLINK1)
 
