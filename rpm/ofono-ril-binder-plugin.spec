@@ -17,7 +17,7 @@ Requires: libgrilio >= %{libgrilio_version}
 BuildRequires: ofono-devel >= %{ofono_version}
 BuildRequires: pkgconfig(libgrilio) >= %{libgrilio_version}
 
-%define plugin_dir /usr/lib/ofono/plugins
+%define plugin_dir %{_libdir}/ofono/plugins
 
 %description
 This package contains ofono plugin which implements binder transport for RIL
