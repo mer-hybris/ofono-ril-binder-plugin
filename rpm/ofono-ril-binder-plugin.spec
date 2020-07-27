@@ -9,9 +9,8 @@ Source: %{name}-%{version}.tar.bz2
 %define ofono_version 1.21+git57
 %define libgrilio_version 1.0.35
 %define libgbinder_version 1.0.23
-%define libgbinder_radio_version 1.0.8
+%define libgbinder_radio_version 1.2.2
 
-Requires: libgrilio-binder >= %{libgbinder_radio_version}
 Requires: ofono >= %{ofono_version}
 Requires: libgrilio >= %{libgrilio_version}
 BuildRequires: ofono-devel >= %{ofono_version}
@@ -46,9 +45,9 @@ mkdir -p %{buildroot}/%{plugin_dir}
 Summary: Binder based transport for libgrilio
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
-Requires: ofono >= %{ofono_version}
 Requires: libgbinder >= %{libgbinder_version}
 Requires: libgbinder-radio >= %{libgbinder_radio_version}
+BuildRequires: pkgconfig(libgbinder) >= %{libgbinder_version}
 BuildRequires: pkgconfig(libgbinder-radio) >= %{libgbinder_radio_version}
 
 %description -n libgrilio-binder
