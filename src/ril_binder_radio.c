@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2018-2020 Jolla Ltd.
- * Copyright (C) 2018-2020 Slava Monich <slava.monich@jolla.com>
+ * Copyright (C) 2018-2021 Jolla Ltd.
+ * Copyright (C) 2018-2021 Slava Monich <slava.monich@jolla.com>
  *
  * You may use this file under the terms of BSD license as follows:
  *
@@ -96,17 +96,21 @@ struct ril_binder_radio_priv {
     RilBinderOemHook* oemhook;
     gulong oemhook_raw_response_id;
     GUtilIdleQueue* idle;
-    GHashTable* req_map;      /* code -> RilBinderRadioCall */
-    GHashTable* resp_map;     /* resp_tx -> RilBinderRadioCall */
-    GHashTable* unsol_map;    /* unsol_tx -> RilBinderRadioEvent */
     GByteArray* buf;
     gulong radio_event_id[RADIO_EVENT_COUNT];
+    /* code -> RilBinderRadioCall */
+    GHashTable* req_map[RADIO_INTERFACE_COUNT];
+    /* resp_tx -> RilBinderRadioCall */
+    GHashTable* resp_map[RADIO_INTERFACE_COUNT];
+    /* unsol_tx -> RilBinderRadioEvent */
+    GHashTable* unsol_map[RADIO_INTERFACE_COUNT];
 };
 
 G_DEFINE_TYPE(RilBinderRadio, ril_binder_radio, GRILIO_TYPE_TRANSPORT)
 
 #define PARENT_CLASS ril_binder_radio_parent_class
 
+#define ARRAY_AND_COUNT(a) a, G_N_ELEMENTS(a)
 #define DBG_(self,fmt,args...) \
     GDEBUG("%s" fmt, (self)->parent.log_prefix, ##args)
 
@@ -209,6 +213,47 @@ ril_binder_radio_arg_value(
     const char* val = args ? g_hash_table_lookup(args, key) : NULL;
 
     return (val && val[0]) ? val : def;
+}
+
+static
+void
+ril_binder_radio_init_call_maps(
+    GHashTable* req_map,
+    GHashTable* resp_map,
+    const RilBinderRadioCall* calls,
+    guint count)
+{
+    guint i;
+
+    for (i = 0; i < count; i++) {
+        const RilBinderRadioCall* call = calls + i;
+
+        if (call->req_tx) {
+            g_hash_table_insert(req_map, GINT_TO_POINTER(call->code),
+                (gpointer) call);
+        }
+        if (call->resp_tx) {
+            g_hash_table_insert(resp_map, GINT_TO_POINTER(call->resp_tx),
+                (gpointer) call);
+        }
+    }
+}
+
+static
+void
+ril_binder_radio_init_unsol_map(
+    GHashTable* unsol_map,
+    const RilBinderRadioEvent* events,
+    guint count)
+{
+    guint i;
+
+    for (i = 0; i < count; i++) {
+        const RilBinderRadioEvent* event = events + i;
+
+        g_hash_table_insert(unsol_map, GINT_TO_POINTER(event->unsol_tx),
+            (gpointer) event);
+    }
 }
 
 /*==========================================================================*
@@ -411,6 +456,45 @@ ril_binder_radio_encode_deactivate_data_call(
     return ok;
 }
 
+static
+gboolean
+ril_binder_radio_encode_deactivate_data_call_1_2(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    gboolean ok = FALSE;
+    GRilIoParser parser;
+    gint32 count, cid, reason;
+    char* cid_str = NULL;
+    char* reason_str = NULL;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &count) && count == 2 &&
+        (cid_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        (reason_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(cid_str, 10, &cid) &&
+        gutil_parse_int(reason_str, 10, &reason)) {
+        GBinderWriter writer;
+
+        if (reason == 0) {
+            reason = RADIO_DATA_REQUEST_REASON_NORMAL;
+        } else if (reason == 1) {
+            reason = RADIO_DATA_REQUEST_REASON_SHUTDOWN;
+        } else {
+            reason = RADIO_DATA_REQUEST_REASON_HANDOVER;
+        }
+
+        gbinder_local_request_init_writer(out, &writer);
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+        gbinder_writer_append_int32(&writer, cid);
+        gbinder_writer_append_int32(&writer, reason);
+        ok = TRUE;
+    }
+    g_free(cid_str);
+    g_free(reason_str);
+    return ok;
+}
+
 /**
  * @param int32_t Serial number of request.
  * @param dialInfo Dial struct
@@ -583,6 +667,135 @@ ril_binder_radio_encode_setup_data_call(
         /* TODO: provide the actual roaming status? */
         gbinder_writer_append_bool(&writer, TRUE);  /* roamingAllowed */
         gbinder_writer_append_bool(&writer, FALSE); /* isRoaming */
+        ok = TRUE;
+    } else {
+        g_free(apn);
+        g_free(user);
+        g_free(password);
+        g_free(proto);
+    }
+
+    g_free(profile_str);
+    g_free(tech_str);
+    g_free(auth_str);
+    return ok;
+}
+
+/**
+ * @param int32_t Serial number of request.
+ * @param RadioTechnology Radio technology to use.
+ * @param DataProfileInfo Data profile info.
+ * @param bool modemCognitive Indicating this profile was sent to the modem
+ *                       through setDataProfile earlier.
+ * @param bool roamingAllowed Indicating data roaming is allowed or not.
+ * @param bool isRoaming Indicating the device is roaming or not.
+ */
+static
+gboolean
+ril_binder_radio_encode_setup_data_call_1_2(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    gboolean ok = FALSE;
+    GRilIoParser parser;
+    gint32 count, tech, auth, profile_id;
+    char* profile_str = NULL;
+    char* tech_str = NULL;
+    char* auth_str = NULL;
+    char* apn = NULL;
+    char* user = NULL;
+    char* password = NULL;
+    char* proto = NULL;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &count) && count == 7 &&
+        (tech_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(tech_str, 10, &tech) &&
+        (profile_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(profile_str, 10, &profile_id) &&
+        (apn = grilio_parser_get_utf8(&parser)) != NULL &&
+        (user = grilio_parser_get_utf8(&parser)) != NULL &&
+        (password = grilio_parser_get_utf8(&parser)) != NULL &&
+        (auth_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(auth_str, 10, &auth) &&
+        (proto = grilio_parser_get_utf8(&parser)) != NULL) {
+        GBinderWriter writer;
+        RadioDataProfile* profile;
+
+        /* ril.h has this to say about the radio tech parameter:
+         *
+         * ((const char **)data)[0] Radio technology to use: 0-CDMA,
+         *                          1-GSM/UMTS, 2... for values above 2
+         *                          this is RIL_RadioTechnology + 2.
+         *
+         * Makes little sense but it is what it is.
+         */
+        if (tech > 4) {
+            tech -= 2;
+        }
+
+        tech = RADIO_ACCESS_NETWORK_UNKNOWN;
+        switch ((RADIO_TECH)tech) {
+        case RADIO_TECH_GPRS:
+        case RADIO_TECH_EDGE:
+        case RADIO_TECH_GSM:
+            tech = RADIO_ACCESS_NETWORK_GERAN;
+            break;
+        case RADIO_TECH_UMTS:
+        case RADIO_TECH_HSDPA:
+        case RADIO_TECH_HSPAP:
+        case RADIO_TECH_HSUPA:
+        case RADIO_TECH_HSPA:
+        case RADIO_TECH_TD_SCDMA:
+            tech = RADIO_ACCESS_NETWORK_UTRAN;
+            break;
+        case RADIO_TECH_IS95A:
+        case RADIO_TECH_IS95B:
+        case RADIO_TECH_ONE_X_RTT:
+        case RADIO_TECH_EVDO_0:
+        case RADIO_TECH_EVDO_A:
+        case RADIO_TECH_EVDO_B:
+        case RADIO_TECH_EHRPD:
+            tech = RADIO_ACCESS_NETWORK_CDMA2000;
+            break;
+        case RADIO_TECH_LTE:
+        case RADIO_TECH_LTE_CA:
+            tech = RADIO_ACCESS_NETWORK_EUTRAN;
+            break;
+        case RADIO_TECH_IWLAN:
+            tech = RADIO_ACCESS_NETWORK_IWLAN;
+            break;
+        case RADIO_TECH_UNKNOWN:
+            break;
+        }
+
+        /* Initialize the writer and the data to be written */
+        gbinder_local_request_init_writer(out, &writer);
+        profile = gbinder_writer_new0(&writer, RadioDataProfile);
+        ril_binder_radio_take_string(out, &profile->apn, apn);
+        ril_binder_radio_take_string(out, &profile->protocol, proto);
+        ril_binder_radio_take_string(out, &profile->user, user);
+        ril_binder_radio_take_string(out, &profile->password, password);
+        ril_binder_radio_take_string(out, &profile->mvnoMatchData, NULL);
+        profile->roamingProtocol = profile->protocol;
+        profile->profileId = profile_id;
+        profile->authType = auth;
+        profile->enabled = TRUE;
+        profile->supportedApnTypesBitmap =
+            (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
+                RADIO_APN_TYPE_DEFAULT : RADIO_APN_TYPE_MMS;
+
+        /* Write the parcel */
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+        gbinder_writer_append_int32(&writer, tech); /* radioTechnology */
+        ril_binder_radio_write_single_data_profile(&writer, profile);
+        gbinder_writer_append_bool(&writer, FALSE); /* modemCognitive */
+        /* TODO: provide the actual roaming status? */
+        gbinder_writer_append_bool(&writer, TRUE);  /* roamingAllowed */
+        gbinder_writer_append_bool(&writer, FALSE); /* isRoaming */
+        gbinder_writer_append_int32(&writer, RADIO_DATA_REQUEST_REASON_NORMAL);
+        gbinder_writer_append_hidl_string_vec(&writer, NULL, 0); /* addresses */
+        gbinder_writer_append_hidl_string_vec(&writer, NULL, 0); /* dnses */
         ok = TRUE;
     } else {
         g_free(apn);
@@ -1479,6 +1692,48 @@ ril_binder_radio_decode_icc_card_status(
 }
 
 /**
+ * @param cardStatus ICC card status as defined by CardStatus in types.hal
+ */
+static
+gboolean
+ril_binder_radio_decode_icc_card_status_1_2(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean ok = FALSE;
+    const RadioCardStatus_1_2* sim = gbinder_reader_read_hidl_struct
+        (in, RadioCardStatus_1_2);
+
+    if (sim) {
+        const RadioAppStatus* apps = sim->apps.data.ptr;
+        guint i;
+
+        grilio_encode_int32(out, sim->cardState);
+        grilio_encode_int32(out, sim->universalPinState);
+        grilio_encode_int32(out, sim->gsmUmtsSubscriptionAppIndex);
+        grilio_encode_int32(out, sim->cdmaSubscriptionAppIndex);
+        grilio_encode_int32(out, sim->imsSubscriptionAppIndex);
+        grilio_encode_int32(out, sim->apps.count);
+
+        for (i = 0; i < sim->apps.count; i++) {
+            const RadioAppStatus* app = apps + i;
+
+            grilio_encode_int32(out, app->appType);
+            grilio_encode_int32(out, app->appState);
+            grilio_encode_int32(out, app->persoSubstate);
+            grilio_encode_utf8(out, app->aid.data.str);
+            grilio_encode_utf8(out, app->label.data.str);
+            grilio_encode_int32(out, app->pinReplaced);
+            grilio_encode_int32(out, app->pin1);
+            grilio_encode_int32(out, app->pin2);
+        }
+
+        ok = TRUE;
+    }
+    return ok;
+}
+
+/**
  * @param voiceRegResponse VoiceRegStateResult defined in types.hal
  */
 static
@@ -1623,6 +1878,46 @@ ril_binder_radio_decode_call_list(
         grilio_encode_int32(out, count);
         for (i = 0; i < count; i++) {
             const RadioCall* call = calls + i;
+
+            grilio_encode_int32(out, call->state);
+            grilio_encode_int32(out, call->index);
+            grilio_encode_int32(out, call->toa);
+            grilio_encode_int32(out, call->isMpty);
+            grilio_encode_int32(out, call->isMT);
+            grilio_encode_int32(out, call->als);
+            grilio_encode_int32(out, call->isVoice);
+            grilio_encode_int32(out, call->isVoicePrivacy);
+            grilio_encode_utf8(out, call->number.data.str);
+            grilio_encode_int32(out, call->numberPresentation);
+            grilio_encode_utf8(out, call->name.data.str);
+            grilio_encode_int32(out, call->namePresentation);
+            grilio_encode_int32(out, 0);  /* uusInfo */
+        }
+        ok = TRUE;
+    }
+    return ok;
+}
+
+/**
+ * @param calls Current call list
+ */
+static
+gboolean
+ril_binder_radio_decode_call_list_1_2(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean ok = FALSE;
+    gsize count = 0;
+    const RadioCall_1_2* calls = gbinder_reader_read_hidl_type_vec
+        (in, RadioCall_1_2, &count);
+
+    if (calls) {
+        guint i;
+
+        grilio_encode_int32(out, count);
+        for (i = 0; i < count; i++) {
+            const RadioCall_1_2* call = calls + i;
 
             grilio_encode_int32(out, call->state);
             grilio_encode_int32(out, call->index);
@@ -1916,6 +2211,47 @@ ril_binder_radio_decode_signal_strength(
 }
 
 /**
+ * @param signalStrength SignalStrength information as defined in types.hal
+ */
+static
+gboolean
+ril_binder_radio_decode_signal_strength_1_2(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    const RadioSignalStrength_1_2* strength = gbinder_reader_read_hidl_struct
+        (in, RadioSignalStrength_1_2);
+
+    if (strength) {
+        /* GW_SignalStrength */
+        grilio_encode_int32(out, strength->gw.signalStrength);
+        grilio_encode_int32(out, strength->gw.bitErrorRate);
+
+        /* CDMA_SignalStrength */
+        grilio_encode_int32(out, strength->cdma.dbm);
+        grilio_encode_int32(out, strength->cdma.ecio);
+
+        /* EVDO_SignalStrength */
+        grilio_encode_int32(out, strength->evdo.dbm);
+        grilio_encode_int32(out, strength->evdo.ecio);
+        grilio_encode_int32(out, strength->evdo.signalNoiseRatio);
+
+        /* LTE_SignalStrength_v8 */
+        grilio_encode_int32(out, strength->lte.signalStrength);
+        grilio_encode_int32(out, strength->lte.rsrp);
+        grilio_encode_int32(out, strength->lte.rsrq);
+        grilio_encode_int32(out, strength->lte.rssnr);
+        grilio_encode_int32(out, strength->lte.cqi);
+        grilio_encode_int32(out, strength->lte.timingAdvance);
+
+        /* TD_SCDMA_SignalStrength */
+        grilio_encode_int32(out, strength->tdScdma.rscp);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/**
  * @param suppSvc SuppSvcNotification as defined in types.hal
  */
 static
@@ -2133,6 +2469,181 @@ ril_binder_radio_decode_cell_info_tdscdma(
     }
 }
 
+static
+void
+ril_binder_radio_decode_cell_info_header_1_2(
+    GByteArray* out,
+    const RadioCellInfo_1_2* cell)
+{
+    grilio_encode_int32(out, cell->cellInfoType);
+    grilio_encode_int32(out, cell->registered);
+    grilio_encode_int32(out, cell->timeStampType);
+    /* There should be grilio_encode_int64() call below (there's no
+     * such function in libgrilio) but the timestamp value is ignored
+     * anyway, so who cares... */
+    grilio_encode_bytes(out, &cell->timeStamp, sizeof(cell->timeStamp));
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_gsm_1_2(
+    GByteArray* out,
+    const RadioCellInfo_1_2* cell)
+{
+    const RadioCellInfoGsm_1_2* info =  cell->gsm.data.ptr;
+    guint i, count = cell->gsm.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityGsm_1_2* id = &info[i].cellIdentityGsm;
+        const RadioSignalStrengthGsm* ss = &info[i].signalStrengthGsm;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header_1_2(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = RADIO_CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = RADIO_CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->lac);
+        grilio_encode_int32(out, id->cid);
+        grilio_encode_int32(out, id->arfcn);
+        grilio_encode_int32(out, id->bsic);
+        grilio_encode_int32(out, ss->signalStrength);
+        grilio_encode_int32(out, ss->bitErrorRate);
+        grilio_encode_int32(out, ss->timingAdvance);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_cdma_1_2(
+    GByteArray* out,
+    const RadioCellInfo_1_2* cell)
+{
+    const RadioCellInfoCdma_1_2* info = cell->cdma.data.ptr;
+    guint i, count = cell->cdma.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityCdma_1_2* id = &info[i].cellIdentityCdma;
+        const RadioSignalStrengthCdma* ss = &info[i].signalStrengthCdma;
+        const RadioSignalStrengthEvdo* evdo = &info[i].signalStrengthEvdo;
+
+        ril_binder_radio_decode_cell_info_header_1_2(out, cell);
+        grilio_encode_int32(out, id->networkId);
+        grilio_encode_int32(out, id->systemId);
+        grilio_encode_int32(out, id->baseStationId);
+        grilio_encode_int32(out, id->longitude);
+        grilio_encode_int32(out, id->latitude);
+        grilio_encode_int32(out, ss->dbm);
+        grilio_encode_int32(out, ss->ecio);
+        grilio_encode_int32(out, evdo->dbm);
+        grilio_encode_int32(out, evdo->ecio);
+        grilio_encode_int32(out, evdo->signalNoiseRatio);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_lte_1_2(
+    GByteArray* out,
+    const RadioCellInfo_1_2* cell)
+{
+    const RadioCellInfoLte_1_2* info = cell->lte.data.ptr;
+    guint i, count = cell->lte.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityLte_1_2* id = &info[i].cellIdentityLte;
+        const RadioSignalStrengthLte* ss = &info[i].signalStrengthLte;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header_1_2(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = RADIO_CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = RADIO_CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->ci);
+        grilio_encode_int32(out, id->pci);
+        grilio_encode_int32(out, id->tac);
+        grilio_encode_int32(out, id->earfcn);
+        grilio_encode_int32(out, ss->signalStrength);
+        grilio_encode_int32(out, ss->rsrp);
+        grilio_encode_int32(out, ss->rsrq);
+        grilio_encode_int32(out, ss->rssnr);
+        grilio_encode_int32(out, ss->cqi);
+        grilio_encode_int32(out, ss->timingAdvance);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_wcdma_1_2(
+    GByteArray* out,
+    const RadioCellInfo_1_2* cell)
+{
+    const RadioCellInfoWcdma_1_2* info = cell->wcdma.data.ptr;
+    guint i, count = cell->wcdma.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityWcdma_1_2* id = &info[i].cellIdentityWcdma;
+        const RadioSignalStrengthWcdma_1_2* ss = &info[i].signalStrengthWcdma;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header_1_2(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = RADIO_CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = RADIO_CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->lac);
+        grilio_encode_int32(out, id->cid);
+        grilio_encode_int32(out, id->psc);
+        grilio_encode_int32(out, id->uarfcn);
+        grilio_encode_int32(out, ss->signalStrength);
+        grilio_encode_int32(out, ss->bitErrorRate);
+    }
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_tdscdma_1_2(
+    GByteArray* out,
+    const RadioCellInfo_1_2* cell)
+{
+    const RadioCellInfoTdscdma_1_2* info = cell->tdscdma.data.ptr;
+    guint i, count = cell->tdscdma.count;
+
+    for (i = 0; i < count; i++) {
+        const RadioCellIdentityTdscdma_1_2* id = &info[i].cellIdentityTdscdma;
+        const RadioSignalStrengthTdScdma_1_2* ss =
+            &info[i].signalStrengthTdscdma;
+        int mcc, mnc;
+
+        ril_binder_radio_decode_cell_info_header_1_2(out, cell);
+        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+            mcc = RADIO_CELL_INVALID_VALUE;
+        }
+        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+            mnc = RADIO_CELL_INVALID_VALUE;
+        }
+        grilio_encode_int32(out, mcc);
+        grilio_encode_int32(out, mnc);
+        grilio_encode_int32(out, id->lac);
+        grilio_encode_int32(out, id->cid);
+        grilio_encode_int32(out, id->cpid);
+        grilio_encode_int32(out, ss->rscp);
+    }
+}
+
 /**
  * @param cellInfo List of current cell information known to radio
  */
@@ -2202,6 +2713,74 @@ ril_binder_radio_decode_cell_info_list(
 }
 
 /**
+ * @param cellInfo List of current cell information known to radio
+ */
+static
+gboolean
+ril_binder_radio_decode_cell_info_list_1_2(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean ok = FALSE;
+    gsize count = 0;
+    const RadioCellInfo_1_2* cells = gbinder_reader_read_hidl_type_vec
+        (in, RadioCellInfo_1_2, &count);
+
+    if (cells) {
+        guint i, n = 0;
+
+        /* Count supported types */
+        for (i = 0; i < count; i++) {
+            const RadioCellInfo_1_2* cell = cells + i;
+
+            switch (cells[i].cellInfoType) {
+            case RADIO_CELL_INFO_GSM:
+                n += cell->gsm.count;
+                break;
+            case RADIO_CELL_INFO_CDMA:
+                n += cell->cdma.count;
+                break;
+            case RADIO_CELL_INFO_LTE:
+                n += cell->lte.count;
+                break;
+            case RADIO_CELL_INFO_WCDMA:
+                n += cell->wcdma.count;
+                break;
+            case RADIO_CELL_INFO_TD_SCDMA:
+                n += cell->tdscdma.count;
+                break;
+            }
+        }
+
+        grilio_encode_int32(out, n);
+
+        for (i = 0; i < count; i++) {
+            const RadioCellInfo_1_2* cell = cells + i;
+
+            switch (cell->cellInfoType) {
+            case RADIO_CELL_INFO_GSM:
+                ril_binder_radio_decode_cell_info_gsm_1_2(out, cell);
+                break;
+            case RADIO_CELL_INFO_CDMA:
+                ril_binder_radio_decode_cell_info_cdma_1_2(out, cell);
+                break;
+            case RADIO_CELL_INFO_LTE:
+                ril_binder_radio_decode_cell_info_lte_1_2(out, cell);
+                break;
+            case RADIO_CELL_INFO_WCDMA:
+                ril_binder_radio_decode_cell_info_wcdma_1_2(out, cell);
+                break;
+            case RADIO_CELL_INFO_TD_SCDMA:
+                ril_binder_radio_decode_cell_info_tdscdma_1_2(out, cell);
+                break;
+            }
+        }
+        ok = TRUE;
+    }
+    return ok;
+}
+
+/**
  * @param bool true = registered, false = not registered
  * @param RadioTechnologyFamily (int32).
  */
@@ -2252,7 +2831,7 @@ ril_binder_radio_decode_radio_capability(
  * Calls
  *==========================================================================*/
 
-static const RilBinderRadioCall ril_binder_radio_calls[] = {
+static const RilBinderRadioCall ril_binder_radio_calls_1_0[] = {
     {
         RIL_REQUEST_GET_SIM_STATUS,
         RADIO_REQ_GET_ICC_CARD_STATUS,
@@ -2836,11 +3415,71 @@ static const RilBinderRadioCall ril_binder_radio_calls[] = {
     }
 };
 
+static const RilBinderRadioCall ril_binder_radio_calls_1_2[] = {
+    {
+        0,
+        0,
+        RADIO_RESP_GET_ICC_CARD_STATUS_1_2,
+        NULL,
+        ril_binder_radio_decode_icc_card_status_1_2,
+        "getIccCardStatus_1_2"
+    },{
+        RIL_REQUEST_SETUP_DATA_CALL,
+        RADIO_REQ_SETUP_DATA_CALL_1_2,
+        0,
+        ril_binder_radio_encode_setup_data_call_1_2,
+        ril_binder_radio_decode_setup_data_call_result,
+        "setupDataCall_1_2"
+    },{
+        RIL_REQUEST_DEACTIVATE_DATA_CALL,
+        RADIO_REQ_DEACTIVATE_DATA_CALL_1_2,
+        0,
+        ril_binder_radio_encode_deactivate_data_call_1_2,
+        NULL,
+        "deactivateDataCall_1_2"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_VOICE_REGISTRATION_STATE_1_2,
+        NULL,
+        ril_binder_radio_decode_voice_reg_state,
+        "getVoiceRegistrationState_1_2"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_DATA_REGISTRATION_STATE_1_2,
+        NULL,
+        ril_binder_radio_decode_data_reg_state,
+        "getDataRegistrationState_1_2"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_CURRENT_CALLS_1_2,
+        NULL,
+        ril_binder_radio_decode_call_list_1_2,
+        "getCurrentCalls_1_2"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_CELL_INFO_LIST_1_2,
+        NULL,
+        ril_binder_radio_decode_cell_info_list_1_2,
+        "getCellInfoList_1_2"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_SIGNAL_STRENGTH_1_2,
+        NULL,
+        ril_binder_radio_decode_signal_strength_1_2,
+        "getSignalStrength_1_2"
+    }
+};
+
 /*==========================================================================*
  * Events
  *==========================================================================*/
 
-static const RilBinderRadioEvent ril_binder_radio_events[] = {
+static const RilBinderRadioEvent ril_binder_radio_events_1_0[] = {
     {
         RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED,
         RADIO_IND_RADIO_STATE_CHANGED,
@@ -2951,6 +3590,20 @@ static const RilBinderRadioEvent ril_binder_radio_events[] = {
         RADIO_IND_SUBSCRIPTION_STATUS_CHANGED,
         ril_binder_radio_decode_bool_to_int_array,
         "subscriptionStatusChanged"
+    }
+};
+
+static const RilBinderRadioEvent ril_binder_radio_events_1_2[] = {
+    {
+        RIL_UNSOL_CELL_INFO_LIST,
+        RADIO_IND_CELL_INFO_LIST_1_2,
+        ril_binder_radio_decode_cell_info_list_1_2,
+        "cellInfoList_1_2"
+    },{
+        RIL_UNSOL_SIGNAL_STRENGTH,
+        RADIO_IND_CURRENT_SIGNAL_STRENGTH_1_2,
+        ril_binder_radio_decode_signal_strength_1_2,
+        "currentSignalStrength_1_2"
     }
 };
 
@@ -3068,6 +3721,7 @@ ril_binder_radio_connected(
 
     DBG_(self, "connected");
     GASSERT(!transport->connected);
+    transport->ril_version = self->radio->version;
     transport->connected = TRUE;
     grilio_transport_signal_connected(transport);
 }
@@ -3188,8 +3842,16 @@ ril_binder_radio_handle_response(
     const GBinderReader* args)
 {
     RilBinderRadioPriv* priv = self->priv;
-    const RilBinderRadioCall* call = g_hash_table_lookup(priv->resp_map,
-        GINT_TO_POINTER(code));
+    int i = MIN(self->radio->version, RADIO_INTERFACE_COUNT - 1);
+    const RilBinderRadioCall* call = NULL;
+
+    while (i >= 0 && !call) {
+        GHashTable* map = priv->resp_map[i--];
+
+        if (map) {
+            call = g_hash_table_lookup(map, GINT_TO_POINTER(code));
+        }
+    }
 
     if (call) {
         GBinderReader copy;
@@ -3213,16 +3875,23 @@ ril_binder_radio_handle_indication(
     RADIO_IND_TYPE type,
     const GBinderReader* args)
 {
-    RilBinderRadioPriv* priv = self->priv;
-
     /* CONNECTED indication is slightly special */
     if (code == RADIO_IND_RIL_CONNECTED) {
         DBG_(self, "IRadioIndication %u rilConnected", code);
         ril_binder_radio_connected(self);
         return TRUE;
     } else {
-        const RilBinderRadioEvent* event = g_hash_table_lookup(priv->unsol_map,
-            GINT_TO_POINTER(code));
+        RilBinderRadioPriv* priv = self->priv;
+        int i = MIN(self->radio->version, RADIO_INTERFACE_COUNT - 1);
+        const RilBinderRadioEvent* event = NULL;
+
+        while (i >= 0 && !event) {
+            GHashTable* map = priv->unsol_map[i--];
+
+            if (map) {
+                event = g_hash_table_lookup(map, GINT_TO_POINTER(code));
+            }
+        }
 
         if (event) {
             GBinderReader reader;
@@ -3254,8 +3923,16 @@ ril_binder_radio_send(
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(transport);
     RilBinderRadioPriv* priv = self->priv;
-    const RilBinderRadioCall* call = g_hash_table_lookup(priv->req_map,
-        GINT_TO_POINTER(code));
+    int i = MIN(self->radio->version, RADIO_INTERFACE_COUNT - 1);
+    const RilBinderRadioCall* call = NULL;
+
+    while (i >= 0 && !call) {
+        GHashTable* map = priv->req_map[i--];
+
+        if (map) {
+            call = g_hash_table_lookup(map, GINT_TO_POINTER(code));
+        }
+    }
 
     if (call) {
         /* This is a known request */
@@ -3479,15 +4156,39 @@ ril_binder_radio_init_base(
     RilBinderRadio* self,
     GHashTable* args)
 {
-    RilBinderRadioPriv* priv = self->priv;
     const char* dev = ril_binder_radio_arg_dev(args);
     const char* name = ril_binder_radio_arg_name(args);
 
     GDEBUG("%s %s %s %s", self->parent.log_prefix,
         ril_binder_radio_arg_modem(args), dev, name);
-    self->radio = radio_instance_new(dev, name);
+    self->radio = radio_instance_new_with_version(dev, name,
+        RADIO_INTERFACE_1_2);
     if (self->radio) {
+        RilBinderRadioPriv* priv = self->priv;
         GBinderServiceManager* sm = gbinder_servicemanager_new(dev);
+        RADIO_INTERFACE v;
+
+        /* android.hardware.radio@1.0 */
+        v = RADIO_INTERFACE_1_0;
+        priv->req_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+        priv->resp_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+        priv->unsol_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+        ril_binder_radio_init_call_maps(priv->req_map[v], priv->resp_map[v],
+            ARRAY_AND_COUNT(ril_binder_radio_calls_1_0));
+        ril_binder_radio_init_unsol_map(priv->unsol_map[v],
+            ARRAY_AND_COUNT(ril_binder_radio_events_1_0));
+
+        if (self->radio->version >= RADIO_INTERFACE_1_2) {
+            /* android.hardware.radio@1.2 */
+            v = RADIO_INTERFACE_1_2;
+            priv->req_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+            priv->resp_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+            priv->unsol_map[v] = g_hash_table_new(g_direct_hash,g_direct_equal);
+            ril_binder_radio_init_call_maps(priv->req_map[v], priv->resp_map[v],
+                ARRAY_AND_COUNT(ril_binder_radio_calls_1_2));
+            ril_binder_radio_init_unsol_map(priv->unsol_map[v],
+                ARRAY_AND_COUNT(ril_binder_radio_events_1_2));
+        }
 
         priv->oemhook = ril_binder_oemhook_new(sm, self->radio);
         if (priv->oemhook) {
@@ -3523,33 +4224,12 @@ void
 ril_binder_radio_init(
     RilBinderRadio* self)
 {
-    guint i;
     RilBinderRadioPriv* priv = G_TYPE_INSTANCE_GET_PRIVATE
         (self, RIL_TYPE_BINDER_RADIO, RilBinderRadioPriv);
 
     self->priv = priv;
     priv->idle = gutil_idle_queue_new();
-    priv->req_map = g_hash_table_new(g_direct_hash, g_direct_equal);
-    priv->resp_map = g_hash_table_new(g_direct_hash, g_direct_equal);
-    priv->unsol_map = g_hash_table_new(g_direct_hash, g_direct_equal);
-
-    for (i = 0; i < G_N_ELEMENTS(ril_binder_radio_calls); i++) {
-        const RilBinderRadioCall* call = ril_binder_radio_calls + i;
-
-        g_hash_table_insert(priv->req_map, GINT_TO_POINTER(call->code),
-            (gpointer)call);
-        if (call->resp_tx) {
-            g_hash_table_insert(priv->resp_map, GINT_TO_POINTER(call->resp_tx),
-            (gpointer)call);
-        }
-    }
-
-    for (i = 0; i < G_N_ELEMENTS(ril_binder_radio_events); i++) {
-        const RilBinderRadioEvent* event = ril_binder_radio_events + i;
-
-        g_hash_table_insert(priv->unsol_map, GINT_TO_POINTER(event->unsol_tx),
-            (gpointer)event);
-    }
+    priv->buf = g_byte_array_new();
 }
 
 static
@@ -3559,16 +4239,23 @@ ril_binder_radio_finalize(
 {
     RilBinderRadio* self = RIL_BINDER_RADIO(object);
     RilBinderRadioPriv* priv = self->priv;
+    int i;
 
     ril_binder_radio_drop_radio(self);
     gutil_idle_queue_cancel_all(priv->idle);
     gutil_idle_queue_unref(priv->idle);
-    g_hash_table_destroy(priv->req_map);
-    g_hash_table_destroy(priv->resp_map);
-    g_hash_table_destroy(priv->unsol_map);
-    if (priv->buf) {
-        g_byte_array_unref(priv->buf);
+    for (i = 0; i < RADIO_INTERFACE_COUNT; i++) {
+        if (priv->req_map[i]) {
+            g_hash_table_destroy(priv->req_map[i]);
+        }
+        if (priv->resp_map[i]) {
+            g_hash_table_destroy(priv->resp_map[i]);
+        }
+        if (priv->unsol_map[i]) {
+            g_hash_table_destroy(priv->unsol_map[i]);
+        }
     }
+    g_byte_array_unref(priv->buf);
     G_OBJECT_CLASS(PARENT_CLASS)->finalize(object);
 }
 
