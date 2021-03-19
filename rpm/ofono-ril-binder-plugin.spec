@@ -1,5 +1,5 @@
 Name: ofono-ril-binder-plugin
-Version: 1.2.0
+Version: 1.2.1
 Release: 1
 Summary: Ofono RIL binder transport plugin
 License: BSD
@@ -9,7 +9,7 @@ Source: %{name}-%{version}.tar.bz2
 %define ofono_version 1.21+git57
 %define libgrilio_version 1.0.35
 %define libgbinder_version 1.0.23
-%define libgbinder_radio_version 1.2.2
+%define libgbinder_radio_version 1.2.3
 
 Requires: ofono >= %{ofono_version}
 Requires: libgrilio >= %{libgrilio_version}
