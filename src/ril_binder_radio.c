@@ -1653,8 +1653,38 @@ ril_binder_radio_decode_byte_array_to_hex(
  * @param cardStatus ICC card status as defined by CardStatus in types.hal
  */
 static
-gboolean
+void
 ril_binder_radio_decode_icc_card_status(
+    const RadioCardStatus* sim,
+    GByteArray* out)
+{
+    const RadioAppStatus* apps = sim->apps.data.ptr;
+    guint i;
+
+    grilio_encode_int32(out, sim->cardState);
+    grilio_encode_int32(out, sim->universalPinState);
+    grilio_encode_int32(out, sim->gsmUmtsSubscriptionAppIndex);
+    grilio_encode_int32(out, sim->cdmaSubscriptionAppIndex);
+    grilio_encode_int32(out, sim->imsSubscriptionAppIndex);
+    grilio_encode_int32(out, sim->apps.count);
+
+    for (i = 0; i < sim->apps.count; i++) {
+        const RadioAppStatus* app = apps + i;
+
+        grilio_encode_int32(out, app->appType);
+        grilio_encode_int32(out, app->appState);
+        grilio_encode_int32(out, app->persoSubstate);
+        grilio_encode_utf8(out, app->aid.data.str);
+        grilio_encode_utf8(out, app->label.data.str);
+        grilio_encode_int32(out, app->pinReplaced);
+        grilio_encode_int32(out, app->pin1);
+        grilio_encode_int32(out, app->pin2);
+    }
+}
+
+static
+gboolean
+ril_binder_radio_decode_icc_card_status_1_0(
     GBinderReader* in,
     GByteArray* out)
 {
@@ -1663,29 +1693,7 @@ ril_binder_radio_decode_icc_card_status(
         (in, RadioCardStatus);
 
     if (sim) {
-        const RadioAppStatus* apps = sim->apps.data.ptr;
-        guint i;
-
-        grilio_encode_int32(out, sim->cardState);
-        grilio_encode_int32(out, sim->universalPinState);
-        grilio_encode_int32(out, sim->gsmUmtsSubscriptionAppIndex);
-        grilio_encode_int32(out, sim->cdmaSubscriptionAppIndex);
-        grilio_encode_int32(out, sim->imsSubscriptionAppIndex);
-        grilio_encode_int32(out, sim->apps.count);
-
-        for (i = 0; i < sim->apps.count; i++) {
-            const RadioAppStatus* app = apps + i;
-
-            grilio_encode_int32(out, app->appType);
-            grilio_encode_int32(out, app->appState);
-            grilio_encode_int32(out, app->persoSubstate);
-            grilio_encode_utf8(out, app->aid.data.str);
-            grilio_encode_utf8(out, app->label.data.str);
-            grilio_encode_int32(out, app->pinReplaced);
-            grilio_encode_int32(out, app->pin1);
-            grilio_encode_int32(out, app->pin2);
-        }
-
+        ril_binder_radio_decode_icc_card_status(sim, out);
         ok = TRUE;
     }
     return ok;
@@ -1705,29 +1713,7 @@ ril_binder_radio_decode_icc_card_status_1_2(
         (in, RadioCardStatus_1_2);
 
     if (sim) {
-        const RadioAppStatus* apps = sim->apps.data.ptr;
-        guint i;
-
-        grilio_encode_int32(out, sim->cardState);
-        grilio_encode_int32(out, sim->universalPinState);
-        grilio_encode_int32(out, sim->gsmUmtsSubscriptionAppIndex);
-        grilio_encode_int32(out, sim->cdmaSubscriptionAppIndex);
-        grilio_encode_int32(out, sim->imsSubscriptionAppIndex);
-        grilio_encode_int32(out, sim->apps.count);
-
-        for (i = 0; i < sim->apps.count; i++) {
-            const RadioAppStatus* app = apps + i;
-
-            grilio_encode_int32(out, app->appType);
-            grilio_encode_int32(out, app->appState);
-            grilio_encode_int32(out, app->persoSubstate);
-            grilio_encode_utf8(out, app->aid.data.str);
-            grilio_encode_utf8(out, app->label.data.str);
-            grilio_encode_int32(out, app->pinReplaced);
-            grilio_encode_int32(out, app->pin1);
-            grilio_encode_int32(out, app->pin2);
-        }
-
+        ril_binder_radio_decode_icc_card_status(&sim->base, out);
         ok = TRUE;
     }
     return ok;
@@ -1862,6 +1848,27 @@ ril_binder_radio_decode_call_forward_info_array(
  * @param calls Current call list
  */
 static
+void
+ril_binder_radio_decode_call(
+    const RadioCall* call,
+    GByteArray* out)
+{
+    grilio_encode_int32(out, call->state);
+    grilio_encode_int32(out, call->index);
+    grilio_encode_int32(out, call->toa);
+    grilio_encode_int32(out, call->isMpty);
+    grilio_encode_int32(out, call->isMT);
+    grilio_encode_int32(out, call->als);
+    grilio_encode_int32(out, call->isVoice);
+    grilio_encode_int32(out, call->isVoicePrivacy);
+    grilio_encode_utf8(out, call->number.data.str);
+    grilio_encode_int32(out, call->numberPresentation);
+    grilio_encode_utf8(out, call->name.data.str);
+    grilio_encode_int32(out, call->namePresentation);
+    grilio_encode_int32(out, 0);  /* uusInfo */
+}
+
+static
 gboolean
 ril_binder_radio_decode_call_list(
     GBinderReader* in,
@@ -1877,21 +1884,7 @@ ril_binder_radio_decode_call_list(
 
         grilio_encode_int32(out, count);
         for (i = 0; i < count; i++) {
-            const RadioCall* call = calls + i;
-
-            grilio_encode_int32(out, call->state);
-            grilio_encode_int32(out, call->index);
-            grilio_encode_int32(out, call->toa);
-            grilio_encode_int32(out, call->isMpty);
-            grilio_encode_int32(out, call->isMT);
-            grilio_encode_int32(out, call->als);
-            grilio_encode_int32(out, call->isVoice);
-            grilio_encode_int32(out, call->isVoicePrivacy);
-            grilio_encode_utf8(out, call->number.data.str);
-            grilio_encode_int32(out, call->numberPresentation);
-            grilio_encode_utf8(out, call->name.data.str);
-            grilio_encode_int32(out, call->namePresentation);
-            grilio_encode_int32(out, 0);  /* uusInfo */
+            ril_binder_radio_decode_call(calls + i, out);
         }
         ok = TRUE;
     }
@@ -1917,21 +1910,7 @@ ril_binder_radio_decode_call_list_1_2(
 
         grilio_encode_int32(out, count);
         for (i = 0; i < count; i++) {
-            const RadioCall_1_2* call = calls + i;
-
-            grilio_encode_int32(out, call->state);
-            grilio_encode_int32(out, call->index);
-            grilio_encode_int32(out, call->toa);
-            grilio_encode_int32(out, call->isMpty);
-            grilio_encode_int32(out, call->isMT);
-            grilio_encode_int32(out, call->als);
-            grilio_encode_int32(out, call->isVoice);
-            grilio_encode_int32(out, call->isVoicePrivacy);
-            grilio_encode_utf8(out, call->number.data.str);
-            grilio_encode_int32(out, call->numberPresentation);
-            grilio_encode_utf8(out, call->name.data.str);
-            grilio_encode_int32(out, call->namePresentation);
-            grilio_encode_int32(out, 0);  /* uusInfo */
+            ril_binder_radio_decode_call(&calls[i].base, out);
         }
         ok = TRUE;
     }
@@ -2314,32 +2293,42 @@ static
 void
 ril_binder_radio_decode_cell_info_gsm(
     GByteArray* out,
+    const RadioCellIdentityGsm* id,
+    const RadioSignalStrengthGsm* ss)
+{
+    int mcc, mnc;
+
+    if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+        mcc = RADIO_CELL_INVALID_VALUE;
+    }
+    if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+        mnc = RADIO_CELL_INVALID_VALUE;
+    }
+    grilio_encode_int32(out, mcc);
+    grilio_encode_int32(out, mnc);
+    grilio_encode_int32(out, id->lac);
+    grilio_encode_int32(out, id->cid);
+    grilio_encode_int32(out, id->arfcn);
+    grilio_encode_int32(out, id->bsic);
+    grilio_encode_int32(out, ss->signalStrength);
+    grilio_encode_int32(out, ss->bitErrorRate);
+    grilio_encode_int32(out, ss->timingAdvance);
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_gsm_1_0(
+    GByteArray* out,
     const RadioCellInfo* cell)
 {
     const RadioCellInfoGsm* info =  cell->gsm.data.ptr;
     guint i, count = cell->gsm.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityGsm* id = &info[i].cellIdentityGsm;
-        const RadioSignalStrengthGsm* ss = &info[i].signalStrengthGsm;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->lac);
-        grilio_encode_int32(out, id->cid);
-        grilio_encode_int32(out, id->arfcn);
-        grilio_encode_int32(out, id->bsic);
-        grilio_encode_int32(out, ss->signalStrength);
-        grilio_encode_int32(out, ss->bitErrorRate);
-        grilio_encode_int32(out, ss->timingAdvance);
+        ril_binder_radio_decode_cell_info_gsm(out,
+            &info[i].cellIdentityGsm,
+            &info[i].signalStrengthGsm);
     }
 }
 
@@ -2347,27 +2336,37 @@ static
 void
 ril_binder_radio_decode_cell_info_cdma(
     GByteArray* out,
+    const RadioCellIdentityCdma* id,
+    const RadioSignalStrengthCdma* ss,
+    const RadioSignalStrengthEvdo* evdo)
+{
+    grilio_encode_int32(out, id->networkId);
+    grilio_encode_int32(out, id->systemId);
+    grilio_encode_int32(out, id->baseStationId);
+    grilio_encode_int32(out, id->longitude);
+    grilio_encode_int32(out, id->latitude);
+    grilio_encode_int32(out, ss->dbm);
+    grilio_encode_int32(out, ss->ecio);
+    grilio_encode_int32(out, evdo->dbm);
+    grilio_encode_int32(out, evdo->ecio);
+    grilio_encode_int32(out, evdo->signalNoiseRatio);
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_cdma_1_0(
+    GByteArray* out,
     const RadioCellInfo* cell)
 {
     const RadioCellInfoCdma* info = cell->cdma.data.ptr;
     guint i, count = cell->cdma.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityCdma* id = &info[i].cellIdentityCdma;
-        const RadioSignalStrengthCdma* ss = &info[i].signalStrengthCdma;
-        const RadioSignalStrengthEvdo* evdo = &info[i].signalStrengthEvdo;
-
         ril_binder_radio_decode_cell_info_header(out, cell);
-        grilio_encode_int32(out, id->networkId);
-        grilio_encode_int32(out, id->systemId);
-        grilio_encode_int32(out, id->baseStationId);
-        grilio_encode_int32(out, id->longitude);
-        grilio_encode_int32(out, id->latitude);
-        grilio_encode_int32(out, ss->dbm);
-        grilio_encode_int32(out, ss->ecio);
-        grilio_encode_int32(out, evdo->dbm);
-        grilio_encode_int32(out, evdo->ecio);
-        grilio_encode_int32(out, evdo->signalNoiseRatio);
+        ril_binder_radio_decode_cell_info_cdma(out,
+            &info[i].cellIdentityCdma,
+            &info[i].signalStrengthCdma,
+            &info[i].signalStrengthEvdo);
     }
 }
 
@@ -2375,35 +2374,45 @@ static
 void
 ril_binder_radio_decode_cell_info_lte(
     GByteArray* out,
+    const RadioCellIdentityLte* id,
+    const RadioSignalStrengthLte* ss)
+{
+    int mcc, mnc;
+
+    if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+        mcc = RADIO_CELL_INVALID_VALUE;
+    }
+    if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+        mnc = RADIO_CELL_INVALID_VALUE;
+    }
+    grilio_encode_int32(out, mcc);
+    grilio_encode_int32(out, mnc);
+    grilio_encode_int32(out, id->ci);
+    grilio_encode_int32(out, id->pci);
+    grilio_encode_int32(out, id->tac);
+    grilio_encode_int32(out, id->earfcn);
+    grilio_encode_int32(out, ss->signalStrength);
+    grilio_encode_int32(out, ss->rsrp);
+    grilio_encode_int32(out, ss->rsrq);
+    grilio_encode_int32(out, ss->rssnr);
+    grilio_encode_int32(out, ss->cqi);
+    grilio_encode_int32(out, ss->timingAdvance);
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_lte_1_0(
+    GByteArray* out,
     const RadioCellInfo* cell)
 {
     const RadioCellInfoLte* info = cell->lte.data.ptr;
     guint i, count = cell->lte.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityLte* id = &info[i].cellIdentityLte;
-        const RadioSignalStrengthLte* ss = &info[i].signalStrengthLte;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->ci);
-        grilio_encode_int32(out, id->pci);
-        grilio_encode_int32(out, id->tac);
-        grilio_encode_int32(out, id->earfcn);
-        grilio_encode_int32(out, ss->signalStrength);
-        grilio_encode_int32(out, ss->rsrp);
-        grilio_encode_int32(out, ss->rsrq);
-        grilio_encode_int32(out, ss->rssnr);
-        grilio_encode_int32(out, ss->cqi);
-        grilio_encode_int32(out, ss->timingAdvance);
+        ril_binder_radio_decode_cell_info_lte(out,
+            &info[i].cellIdentityLte,
+            &info[i].signalStrengthLte);
     }
 }
 
@@ -2411,31 +2420,41 @@ static
 void
 ril_binder_radio_decode_cell_info_wcdma(
     GByteArray* out,
+    const RadioCellIdentityWcdma* id,
+    const RadioSignalStrengthWcdma* ss)
+{
+    int mcc, mnc;
+
+    if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
+        mcc = RADIO_CELL_INVALID_VALUE;
+    }
+    if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
+        mnc = RADIO_CELL_INVALID_VALUE;
+    }
+    grilio_encode_int32(out, mcc);
+    grilio_encode_int32(out, mnc);
+    grilio_encode_int32(out, id->lac);
+    grilio_encode_int32(out, id->cid);
+    grilio_encode_int32(out, id->psc);
+    grilio_encode_int32(out, id->uarfcn);
+    grilio_encode_int32(out, ss->signalStrength);
+    grilio_encode_int32(out, ss->bitErrorRate);
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_wcdma_1_0(
+    GByteArray* out,
     const RadioCellInfo* cell)
 {
     const RadioCellInfoWcdma* info = cell->wcdma.data.ptr;
     guint i, count = cell->wcdma.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityWcdma* id = &info[i].cellIdentityWcdma;
-        const RadioSignalStrengthWcdma* ss = &info[i].signalStrengthWcdma;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->lac);
-        grilio_encode_int32(out, id->cid);
-        grilio_encode_int32(out, id->psc);
-        grilio_encode_int32(out, id->uarfcn);
-        grilio_encode_int32(out, ss->signalStrength);
-        grilio_encode_int32(out, ss->bitErrorRate);
+        ril_binder_radio_decode_cell_info_wcdma(out,
+            &info[i].cellIdentityWcdma,
+            &info[i].signalStrengthWcdma);
     }
 }
 
@@ -2443,29 +2462,36 @@ static
 void
 ril_binder_radio_decode_cell_info_tdscdma(
     GByteArray* out,
+    const RadioCellIdentityTdscdma* id,
+    guint32 rscp)
+{
+    int mcc = RADIO_CELL_INVALID_VALUE;
+    int mnc = RADIO_CELL_INVALID_VALUE;
+
+    gutil_parse_int(id->mcc.data.str, 10, &mcc);
+    gutil_parse_int(id->mnc.data.str, 10, &mnc);
+    grilio_encode_int32(out, mcc);
+    grilio_encode_int32(out, mnc);
+    grilio_encode_int32(out, id->lac);
+    grilio_encode_int32(out, id->cid);
+    grilio_encode_int32(out, id->cpid);
+    grilio_encode_int32(out, rscp);
+}
+
+static
+void
+ril_binder_radio_decode_cell_info_tdscdma_1_0(
+    GByteArray* out,
     const RadioCellInfo* cell)
 {
     const RadioCellInfoTdscdma* info = cell->tdscdma.data.ptr;
     guint i, count = cell->tdscdma.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityTdscdma* id = &info[i].cellIdentityTdscdma;
-        const RadioSignalStrengthTdScdma* ss = &info[i].signalStrengthTdscdma;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->lac);
-        grilio_encode_int32(out, id->cid);
-        grilio_encode_int32(out, id->cpid);
-        grilio_encode_int32(out, ss->rscp);
+        ril_binder_radio_decode_cell_info_tdscdma(out,
+            &info[i].cellIdentityTdscdma,
+            info[i].signalStrengthTdscdma.rscp);
     }
 }
 
@@ -2494,26 +2520,10 @@ ril_binder_radio_decode_cell_info_gsm_1_2(
     guint i, count = cell->gsm.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityGsm_1_2* id = &info[i].cellIdentityGsm;
-        const RadioSignalStrengthGsm* ss = &info[i].signalStrengthGsm;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header_1_2(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->lac);
-        grilio_encode_int32(out, id->cid);
-        grilio_encode_int32(out, id->arfcn);
-        grilio_encode_int32(out, id->bsic);
-        grilio_encode_int32(out, ss->signalStrength);
-        grilio_encode_int32(out, ss->bitErrorRate);
-        grilio_encode_int32(out, ss->timingAdvance);
+        ril_binder_radio_decode_cell_info_gsm(out,
+            &info[i].cellIdentityGsm.base,
+            &info[i].signalStrengthGsm);
     }
 }
 
@@ -2527,21 +2537,11 @@ ril_binder_radio_decode_cell_info_cdma_1_2(
     guint i, count = cell->cdma.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityCdma_1_2* id = &info[i].cellIdentityCdma;
-        const RadioSignalStrengthCdma* ss = &info[i].signalStrengthCdma;
-        const RadioSignalStrengthEvdo* evdo = &info[i].signalStrengthEvdo;
-
         ril_binder_radio_decode_cell_info_header_1_2(out, cell);
-        grilio_encode_int32(out, id->networkId);
-        grilio_encode_int32(out, id->systemId);
-        grilio_encode_int32(out, id->baseStationId);
-        grilio_encode_int32(out, id->longitude);
-        grilio_encode_int32(out, id->latitude);
-        grilio_encode_int32(out, ss->dbm);
-        grilio_encode_int32(out, ss->ecio);
-        grilio_encode_int32(out, evdo->dbm);
-        grilio_encode_int32(out, evdo->ecio);
-        grilio_encode_int32(out, evdo->signalNoiseRatio);
+        ril_binder_radio_decode_cell_info_cdma(out,
+            &info[i].cellIdentityCdma.base,
+            &info[i].signalStrengthCdma,
+            &info[i].signalStrengthEvdo);
     }
 }
 
@@ -2555,29 +2555,10 @@ ril_binder_radio_decode_cell_info_lte_1_2(
     guint i, count = cell->lte.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityLte_1_2* id = &info[i].cellIdentityLte;
-        const RadioSignalStrengthLte* ss = &info[i].signalStrengthLte;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header_1_2(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->ci);
-        grilio_encode_int32(out, id->pci);
-        grilio_encode_int32(out, id->tac);
-        grilio_encode_int32(out, id->earfcn);
-        grilio_encode_int32(out, ss->signalStrength);
-        grilio_encode_int32(out, ss->rsrp);
-        grilio_encode_int32(out, ss->rsrq);
-        grilio_encode_int32(out, ss->rssnr);
-        grilio_encode_int32(out, ss->cqi);
-        grilio_encode_int32(out, ss->timingAdvance);
+        ril_binder_radio_decode_cell_info_lte(out,
+            &info[i].cellIdentityLte.base,
+            &info[i].signalStrengthLte);
     }
 }
 
@@ -2591,25 +2572,10 @@ ril_binder_radio_decode_cell_info_wcdma_1_2(
     guint i, count = cell->wcdma.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityWcdma_1_2* id = &info[i].cellIdentityWcdma;
-        const RadioSignalStrengthWcdma_1_2* ss = &info[i].signalStrengthWcdma;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header_1_2(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->lac);
-        grilio_encode_int32(out, id->cid);
-        grilio_encode_int32(out, id->psc);
-        grilio_encode_int32(out, id->uarfcn);
-        grilio_encode_int32(out, ss->signalStrength);
-        grilio_encode_int32(out, ss->bitErrorRate);
+        ril_binder_radio_decode_cell_info_wcdma(out,
+            &info[i].cellIdentityWcdma.base,
+            &info[i].signalStrengthWcdma.base);
     }
 }
 
@@ -2623,24 +2589,10 @@ ril_binder_radio_decode_cell_info_tdscdma_1_2(
     guint i, count = cell->tdscdma.count;
 
     for (i = 0; i < count; i++) {
-        const RadioCellIdentityTdscdma_1_2* id = &info[i].cellIdentityTdscdma;
-        const RadioSignalStrengthTdScdma_1_2* ss =
-            &info[i].signalStrengthTdscdma;
-        int mcc, mnc;
-
         ril_binder_radio_decode_cell_info_header_1_2(out, cell);
-        if (!gutil_parse_int(id->mcc.data.str, 10, &mcc)) {
-            mcc = RADIO_CELL_INVALID_VALUE;
-        }
-        if (!gutil_parse_int(id->mnc.data.str, 10, &mnc)) {
-            mnc = RADIO_CELL_INVALID_VALUE;
-        }
-        grilio_encode_int32(out, mcc);
-        grilio_encode_int32(out, mnc);
-        grilio_encode_int32(out, id->lac);
-        grilio_encode_int32(out, id->cid);
-        grilio_encode_int32(out, id->cpid);
-        grilio_encode_int32(out, ss->rscp);
+        ril_binder_radio_decode_cell_info_tdscdma(out,
+            &info[i].cellIdentityTdscdma.base,
+            info[i].signalStrengthTdscdma.rscp);
     }
 }
 
@@ -2691,19 +2643,19 @@ ril_binder_radio_decode_cell_info_list(
 
             switch (cell->cellInfoType) {
             case RADIO_CELL_INFO_GSM:
-                ril_binder_radio_decode_cell_info_gsm(out, cell);
+                ril_binder_radio_decode_cell_info_gsm_1_0(out, cell);
                 break;
             case RADIO_CELL_INFO_CDMA:
-                ril_binder_radio_decode_cell_info_cdma(out, cell);
+                ril_binder_radio_decode_cell_info_cdma_1_0(out, cell);
                 break;
             case RADIO_CELL_INFO_LTE:
-                ril_binder_radio_decode_cell_info_lte(out, cell);
+                ril_binder_radio_decode_cell_info_lte_1_0(out, cell);
                 break;
             case RADIO_CELL_INFO_WCDMA:
-                ril_binder_radio_decode_cell_info_wcdma(out, cell);
+                ril_binder_radio_decode_cell_info_wcdma_1_0(out, cell);
                 break;
             case RADIO_CELL_INFO_TD_SCDMA:
-                ril_binder_radio_decode_cell_info_tdscdma(out, cell);
+                ril_binder_radio_decode_cell_info_tdscdma_1_0(out, cell);
                 break;
             }
         }
@@ -2837,7 +2789,7 @@ static const RilBinderRadioCall ril_binder_radio_calls_1_0[] = {
         RADIO_REQ_GET_ICC_CARD_STATUS,
         RADIO_RESP_GET_ICC_CARD_STATUS,
         ril_binder_radio_encode_serial,
-        ril_binder_radio_decode_icc_card_status,
+        ril_binder_radio_decode_icc_card_status_1_0,
         "getIccCardStatus"
     },{
         RIL_REQUEST_ENTER_SIM_PIN,
