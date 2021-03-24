@@ -721,6 +721,7 @@ ril_binder_radio_encode_setup_data_call_1_2(
         (proto = grilio_parser_get_utf8(&parser)) != NULL) {
         GBinderWriter writer;
         RadioDataProfile* profile;
+        RADIO_ACCESS_NETWORK ran;
 
         /* ril.h has this to say about the radio tech parameter:
          *
@@ -734,12 +735,12 @@ ril_binder_radio_encode_setup_data_call_1_2(
             tech -= 2;
         }
 
-        tech = RADIO_ACCESS_NETWORK_UNKNOWN;
+        ran = RADIO_ACCESS_NETWORK_UNKNOWN;
         switch ((RADIO_TECH)tech) {
         case RADIO_TECH_GPRS:
         case RADIO_TECH_EDGE:
         case RADIO_TECH_GSM:
-            tech = RADIO_ACCESS_NETWORK_GERAN;
+            ran = RADIO_ACCESS_NETWORK_GERAN;
             break;
         case RADIO_TECH_UMTS:
         case RADIO_TECH_HSDPA:
@@ -747,7 +748,7 @@ ril_binder_radio_encode_setup_data_call_1_2(
         case RADIO_TECH_HSUPA:
         case RADIO_TECH_HSPA:
         case RADIO_TECH_TD_SCDMA:
-            tech = RADIO_ACCESS_NETWORK_UTRAN;
+            ran = RADIO_ACCESS_NETWORK_UTRAN;
             break;
         case RADIO_TECH_IS95A:
         case RADIO_TECH_IS95B:
@@ -756,14 +757,14 @@ ril_binder_radio_encode_setup_data_call_1_2(
         case RADIO_TECH_EVDO_A:
         case RADIO_TECH_EVDO_B:
         case RADIO_TECH_EHRPD:
-            tech = RADIO_ACCESS_NETWORK_CDMA2000;
+            ran = RADIO_ACCESS_NETWORK_CDMA2000;
             break;
         case RADIO_TECH_LTE:
         case RADIO_TECH_LTE_CA:
-            tech = RADIO_ACCESS_NETWORK_EUTRAN;
+            ran = RADIO_ACCESS_NETWORK_EUTRAN;
             break;
         case RADIO_TECH_IWLAN:
-            tech = RADIO_ACCESS_NETWORK_IWLAN;
+            ran = RADIO_ACCESS_NETWORK_IWLAN;
             break;
         case RADIO_TECH_UNKNOWN:
             break;
@@ -787,7 +788,7 @@ ril_binder_radio_encode_setup_data_call_1_2(
 
         /* Write the parcel */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
-        gbinder_writer_append_int32(&writer, tech); /* radioTechnology */
+        gbinder_writer_append_int32(&writer, ran); /* accessNetwork */
         ril_binder_radio_write_single_data_profile(&writer, profile);
         gbinder_writer_append_bool(&writer, FALSE); /* modemCognitive */
         /* TODO: provide the actual roaming status? */
