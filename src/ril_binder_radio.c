@@ -256,6 +256,33 @@ ril_binder_radio_init_unsol_map(
     }
 }
 
+static
+RADIO_APN_TYPES
+ril_binder_radio_apn_types_for_profile(
+    RADIO_DATA_PROFILE_ID profile_id)
+{
+    switch (profile_id) {
+    case RADIO_DATA_PROFILE_INVALID:
+        return RADIO_APN_TYPE_NONE;
+    case RADIO_DATA_PROFILE_IMS:
+        return RADIO_APN_TYPE_IMS;
+    case RADIO_DATA_PROFILE_CBS:
+        return RADIO_APN_TYPE_CBS;
+    case RADIO_DATA_PROFILE_FOTA:
+        return RADIO_APN_TYPE_FOTA;
+    case RADIO_DATA_PROFILE_DEFAULT:
+        return (RADIO_APN_TYPE_DEFAULT |
+                RADIO_APN_TYPE_SUPL |
+                RADIO_APN_TYPE_IA);
+    default:
+        /*
+         * There's no standard profile id for MMS, OEM-specific profile ids
+         * are used for that.
+         */
+        return RADIO_APN_TYPE_MMS;
+    }
+}
+
 /*==========================================================================*
  * Encoders (plugin -> binder)
  *==========================================================================*/
@@ -656,8 +683,7 @@ ril_binder_radio_encode_setup_data_call(
         profile->authType = auth;
         profile->enabled = TRUE;
         profile->supportedApnTypesBitmap =
-            (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
-                RADIO_APN_TYPE_DEFAULT : RADIO_APN_TYPE_MMS;
+            ril_binder_radio_apn_types_for_profile(profile_id);
 
         /* Write the parcel */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
@@ -783,8 +809,7 @@ ril_binder_radio_encode_setup_data_call_1_2(
         profile->authType = auth;
         profile->enabled = TRUE;
         profile->supportedApnTypesBitmap =
-            (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
-                RADIO_APN_TYPE_DEFAULT : RADIO_APN_TYPE_MMS;
+            ril_binder_radio_apn_types_for_profile(profile_id);
 
         /* Write the parcel */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
@@ -1381,9 +1406,7 @@ ril_binder_radio_encode_data_profiles(
                 dp->authType = auth_type;
                 dp->enabled = enabled;
                 dp->supportedApnTypesBitmap =
-                    (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
-                        (RADIO_APN_TYPE_DEFAULT | RADIO_APN_TYPE_SUPL |
-                         RADIO_APN_TYPE_IA) : RADIO_APN_TYPE_MMS;
+                    ril_binder_radio_apn_types_for_profile(profile_id);
             } else {
                 g_free(apn);
                 g_free(proto);
