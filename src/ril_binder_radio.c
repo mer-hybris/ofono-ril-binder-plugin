@@ -1378,7 +1378,7 @@ ril_binder_radio_encode_data_profiles(
 
         for (i = 0; i < n; i++) {
             RadioDataProfile* dp = profiles + i;
-            gint32 profile_id, auth_type, enabled;
+            gint32 profile_id, type, auth_type, enabled;
             char* apn = NULL;
             char* proto = NULL;
             char* username = NULL;
@@ -1390,7 +1390,7 @@ ril_binder_radio_encode_data_profiles(
                 grilio_parser_get_int32(&parser, &auth_type) &&
                 grilio_parser_get_nullable_utf8(&parser, &username) &&
                 grilio_parser_get_nullable_utf8(&parser, &password) &&
-                grilio_parser_get_int32(&parser, &dp->type) &&
+                grilio_parser_get_int32(&parser, &type) &&
                 grilio_parser_get_int32(&parser, &dp->maxConnsTime) &&
                 grilio_parser_get_int32(&parser, &dp->maxConns) &&
                 grilio_parser_get_int32(&parser, &dp->waitTime) &&
@@ -1401,6 +1401,7 @@ ril_binder_radio_encode_data_profiles(
                 ril_binder_radio_take_string(out, &dp->user, username);
                 ril_binder_radio_take_string(out, &dp->password, password);
                 ril_binder_radio_take_string(out, &dp->mvnoMatchData, NULL);
+                dp->type = type;
                 dp->roamingProtocol = dp->protocol;
                 dp->profileId = profile_id;
                 dp->authType = auth_type;
