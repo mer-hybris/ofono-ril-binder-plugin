@@ -256,6 +256,33 @@ ril_binder_radio_init_unsol_map(
     }
 }
 
+static
+RADIO_APN_TYPES
+ril_binder_radio_apn_types_for_profile(
+    RADIO_DATA_PROFILE_ID profile_id)
+{
+    switch (profile_id) {
+    case RADIO_DATA_PROFILE_INVALID:
+        return RADIO_APN_TYPE_NONE;
+    case RADIO_DATA_PROFILE_IMS:
+        return RADIO_APN_TYPE_IMS;
+    case RADIO_DATA_PROFILE_CBS:
+        return RADIO_APN_TYPE_CBS;
+    case RADIO_DATA_PROFILE_FOTA:
+        return RADIO_APN_TYPE_FOTA;
+    case RADIO_DATA_PROFILE_DEFAULT:
+        return (RADIO_APN_TYPE_DEFAULT |
+                RADIO_APN_TYPE_SUPL |
+                RADIO_APN_TYPE_IA);
+    default:
+        /*
+         * There's no standard profile id for MMS, OEM-specific profile ids
+         * are used for that.
+         */
+        return RADIO_APN_TYPE_MMS;
+    }
+}
+
 /*==========================================================================*
  * Encoders (plugin -> binder)
  *==========================================================================*/
@@ -656,8 +683,7 @@ ril_binder_radio_encode_setup_data_call(
         profile->authType = auth;
         profile->enabled = TRUE;
         profile->supportedApnTypesBitmap =
-            (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
-                RADIO_APN_TYPE_DEFAULT : RADIO_APN_TYPE_MMS;
+            ril_binder_radio_apn_types_for_profile(profile_id);
 
         /* Write the parcel */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
@@ -721,6 +747,7 @@ ril_binder_radio_encode_setup_data_call_1_2(
         (proto = grilio_parser_get_utf8(&parser)) != NULL) {
         GBinderWriter writer;
         RadioDataProfile* profile;
+        RADIO_ACCESS_NETWORK ran;
 
         /* ril.h has this to say about the radio tech parameter:
          *
@@ -734,12 +761,12 @@ ril_binder_radio_encode_setup_data_call_1_2(
             tech -= 2;
         }
 
-        tech = RADIO_ACCESS_NETWORK_UNKNOWN;
+        ran = RADIO_ACCESS_NETWORK_UNKNOWN;
         switch ((RADIO_TECH)tech) {
         case RADIO_TECH_GPRS:
         case RADIO_TECH_EDGE:
         case RADIO_TECH_GSM:
-            tech = RADIO_ACCESS_NETWORK_GERAN;
+            ran = RADIO_ACCESS_NETWORK_GERAN;
             break;
         case RADIO_TECH_UMTS:
         case RADIO_TECH_HSDPA:
@@ -747,7 +774,7 @@ ril_binder_radio_encode_setup_data_call_1_2(
         case RADIO_TECH_HSUPA:
         case RADIO_TECH_HSPA:
         case RADIO_TECH_TD_SCDMA:
-            tech = RADIO_ACCESS_NETWORK_UTRAN;
+            ran = RADIO_ACCESS_NETWORK_UTRAN;
             break;
         case RADIO_TECH_IS95A:
         case RADIO_TECH_IS95B:
@@ -756,14 +783,14 @@ ril_binder_radio_encode_setup_data_call_1_2(
         case RADIO_TECH_EVDO_A:
         case RADIO_TECH_EVDO_B:
         case RADIO_TECH_EHRPD:
-            tech = RADIO_ACCESS_NETWORK_CDMA2000;
+            ran = RADIO_ACCESS_NETWORK_CDMA2000;
             break;
         case RADIO_TECH_LTE:
         case RADIO_TECH_LTE_CA:
-            tech = RADIO_ACCESS_NETWORK_EUTRAN;
+            ran = RADIO_ACCESS_NETWORK_EUTRAN;
             break;
         case RADIO_TECH_IWLAN:
-            tech = RADIO_ACCESS_NETWORK_IWLAN;
+            ran = RADIO_ACCESS_NETWORK_IWLAN;
             break;
         case RADIO_TECH_UNKNOWN:
             break;
@@ -782,12 +809,11 @@ ril_binder_radio_encode_setup_data_call_1_2(
         profile->authType = auth;
         profile->enabled = TRUE;
         profile->supportedApnTypesBitmap =
-            (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
-                RADIO_APN_TYPE_DEFAULT : RADIO_APN_TYPE_MMS;
+            ril_binder_radio_apn_types_for_profile(profile_id);
 
         /* Write the parcel */
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
-        gbinder_writer_append_int32(&writer, tech); /* radioTechnology */
+        gbinder_writer_append_int32(&writer, ran); /* accessNetwork */
         ril_binder_radio_write_single_data_profile(&writer, profile);
         gbinder_writer_append_bool(&writer, FALSE); /* modemCognitive */
         /* TODO: provide the actual roaming status? */
@@ -1352,7 +1378,7 @@ ril_binder_radio_encode_data_profiles(
 
         for (i = 0; i < n; i++) {
             RadioDataProfile* dp = profiles + i;
-            gint32 profile_id, auth_type, enabled;
+            gint32 profile_id, type, auth_type, enabled;
             char* apn = NULL;
             char* proto = NULL;
             char* username = NULL;
@@ -1364,7 +1390,7 @@ ril_binder_radio_encode_data_profiles(
                 grilio_parser_get_int32(&parser, &auth_type) &&
                 grilio_parser_get_nullable_utf8(&parser, &username) &&
                 grilio_parser_get_nullable_utf8(&parser, &password) &&
-                grilio_parser_get_int32(&parser, &dp->type) &&
+                grilio_parser_get_int32(&parser, &type) &&
                 grilio_parser_get_int32(&parser, &dp->maxConnsTime) &&
                 grilio_parser_get_int32(&parser, &dp->maxConns) &&
                 grilio_parser_get_int32(&parser, &dp->waitTime) &&
@@ -1375,14 +1401,13 @@ ril_binder_radio_encode_data_profiles(
                 ril_binder_radio_take_string(out, &dp->user, username);
                 ril_binder_radio_take_string(out, &dp->password, password);
                 ril_binder_radio_take_string(out, &dp->mvnoMatchData, NULL);
+                dp->type = type;
                 dp->roamingProtocol = dp->protocol;
                 dp->profileId = profile_id;
                 dp->authType = auth_type;
                 dp->enabled = enabled;
                 dp->supportedApnTypesBitmap =
-                    (profile_id == RADIO_DATA_PROFILE_DEFAULT) ?
-                        (RADIO_APN_TYPE_DEFAULT | RADIO_APN_TYPE_SUPL |
-                         RADIO_APN_TYPE_IA) : RADIO_APN_TYPE_MMS;
+                    ril_binder_radio_apn_types_for_profile(profile_id);
             } else {
                 g_free(apn);
                 g_free(proto);
