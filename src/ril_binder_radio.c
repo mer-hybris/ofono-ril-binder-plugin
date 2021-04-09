@@ -2227,9 +2227,24 @@ ril_binder_radio_decode_signal_strength_1_2(
         (in, RadioSignalStrength_1_2);
 
     if (strength) {
+        const RadioSignalStrengthGsm* gsm = &strength->gw;
+        const RadioSignalStrengthWcdma* wcdma = &strength->wcdma.base;
+
         /* GW_SignalStrength */
-        grilio_encode_int32(out, strength->gw.signalStrength);
-        grilio_encode_int32(out, strength->gw.bitErrorRate);
+        if (wcdma->signalStrength <= 31 && gsm->signalStrength > 31) {
+            /*
+             * Presumably, 3G signal. The wcdma field did't exist in RIL
+             * socket times.
+             *
+             * Valid signal strength values for both 2G and 3G are (0-31, 99)
+             * as defined in TS 27.007 8.5
+             */
+            grilio_encode_int32(out, wcdma->signalStrength);
+            grilio_encode_int32(out, wcdma->bitErrorRate);
+        } else {
+            grilio_encode_int32(out, gsm->signalStrength);
+            grilio_encode_int32(out, gsm->bitErrorRate);
+        }
 
         /* CDMA_SignalStrength */
         grilio_encode_int32(out, strength->cdma.dbm);
