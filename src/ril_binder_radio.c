@@ -1492,6 +1492,74 @@ ril_binder_radio_encode_radio_capability(
     return FALSE;
 }
 
+static
+gboolean
+ril_binder_radio_encode_icc_open_logical_channel(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    char* aid;
+
+    ril_binder_radio_init_parser(&parser, in);
+    aid = grilio_parser_get_utf8(&parser);
+    if (aid) {
+        GBinderWriter writer;
+        gint32 p2 = 0;
+
+        grilio_parser_get_int32(&parser, &p2); /* Optional? */
+        gbinder_local_request_cleanup(out, g_free, aid);
+        gbinder_local_request_init_writer(out, &writer);
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+        gbinder_writer_append_hidl_string(&writer, aid);
+        gbinder_writer_append_int32(&writer, p2);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/**
+ * @param int32_t Serial number of request.
+ * @param SimApdu
+ */
+static
+gboolean
+ril_binder_radio_encode_icc_transmit_apdu_logical_channel(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    GRilIoParser parser;
+    RadioSimApdu* apdu = g_new0(RadioSimApdu, 1);
+    char* data = NULL;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &apdu->sessionId) &&
+        grilio_parser_get_int32(&parser, &apdu->cla) &&
+        grilio_parser_get_int32(&parser, &apdu->instruction) &&
+        grilio_parser_get_int32(&parser, &apdu->p1) &&
+        grilio_parser_get_int32(&parser, &apdu->p2) &&
+        grilio_parser_get_int32(&parser, &apdu->p3) &&
+        grilio_parser_get_nullable_utf8(&parser, &data)) {
+        GBinderWriter writer;
+        guint parent;
+
+        /* Initialize the writer and the data to be written */
+        gbinder_local_request_init_writer(out, &writer);
+        gbinder_local_request_cleanup(out, g_free, apdu);
+        ril_binder_radio_take_string(out, &apdu->data, data);
+
+        /* Write the arguments */
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+        parent = gbinder_writer_append_buffer_object(&writer, apdu,
+            sizeof(*apdu));
+        ril_binder_radio_write_hidl_string_data(&writer, apdu, data, parent);
+        return TRUE;
+    }
+
+    g_free(apdu);
+    return FALSE;
+}
+
 /*==========================================================================*
  * Decoders (binder -> plugin)
  *==========================================================================*/
@@ -1819,7 +1887,7 @@ ril_binder_radio_decode_sms_send_result(
  */
 static
 gboolean
-ril_binder_radio_decode_icc_result(
+ril_binder_radio_decode_icc_io_result(
     GBinderReader* in,
     GByteArray* out)
 {
@@ -2795,6 +2863,23 @@ ril_binder_radio_decode_ims_registration_state(
     return FALSE;
 }
 
+static
+gboolean
+ril_binder_radio_decode_icc_open_logical_channel(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    guint32 channel;
+
+    if (gbinder_reader_read_uint32(in, &channel)) {
+        grilio_encode_int32(out, 1); /* Number of ints to follow */
+        grilio_encode_int32(out, channel);
+        /* Ignore the select response, ofono doesn't need it */
+        return TRUE;
+    }
+    return FALSE;
+}
+
 /**
  * @param rc Radio capability as defined by RadioCapability
  */
@@ -3018,7 +3103,7 @@ static const RilBinderRadioCall ril_binder_radio_calls_1_0[] = {
         RADIO_REQ_ICC_IO_FOR_APP,
         RADIO_RESP_ICC_IO_FOR_APP,
         ril_binder_radio_encode_icc_io,
-        ril_binder_radio_decode_icc_result,
+        ril_binder_radio_decode_icc_io_result,
         "iccIOForApp"
     },{
         RIL_REQUEST_SEND_USSD,
@@ -3348,6 +3433,27 @@ static const RilBinderRadioCall ril_binder_radio_calls_1_0[] = {
         ril_binder_radio_encode_serial,
         ril_binder_radio_decode_ims_registration_state,
         "getImsRegistrationState"
+    },{
+        RIL_REQUEST_SIM_OPEN_CHANNEL,
+        RADIO_REQ_ICC_OPEN_LOGICAL_CHANNEL,
+        RADIO_RESP_ICC_OPEN_LOGICAL_CHANNEL,
+        ril_binder_radio_encode_icc_open_logical_channel,
+        ril_binder_radio_decode_icc_open_logical_channel,
+        "iccOpenLogicalChannel"
+    },{
+        RIL_REQUEST_SIM_CLOSE_CHANNEL,
+        RADIO_REQ_ICC_CLOSE_LOGICAL_CHANNEL,
+        RADIO_RESP_ICC_CLOSE_LOGICAL_CHANNEL,
+        ril_binder_radio_encode_ints,
+        NULL,
+        "iccCloseLogicalChannel"
+    },{
+        RIL_REQUEST_SIM_TRANSMIT_APDU_CHANNEL,
+        RADIO_REQ_ICC_TRANSMIT_APDU_LOGICAL_CHANNEL,
+        RADIO_RESP_ICC_TRANSMIT_APDU_LOGICAL_CHANNEL,
+        ril_binder_radio_encode_icc_transmit_apdu_logical_channel,
+        ril_binder_radio_decode_icc_io_result,
+        "iccTransmitApduLogicalChannel"
     },{
         RIL_REQUEST_SET_UICC_SUBSCRIPTION,
         RADIO_REQ_SET_UICC_SUBSCRIPTION,

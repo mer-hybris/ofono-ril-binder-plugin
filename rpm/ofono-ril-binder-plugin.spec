@@ -9,7 +9,7 @@ Source: %{name}-%{version}.tar.bz2
 %define ofono_version 1.21+git57
 %define libgrilio_version 1.0.35
 %define libgbinder_version 1.0.23
-%define libgbinder_radio_version 1.2.3
+%define libgbinder_radio_version 1.2.6
 
 Requires: ofono >= %{ofono_version}
 Requires: libgrilio >= %{libgrilio_version}
