@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2018-2021 Jolla Ltd.
  * Copyright (C) 2018-2021 Slava Monich <slava.monich@jolla.com>
+ * Copyright (C) 2021 Open Mobile Platform LLC.
  *
  * You may use this file under the terms of BSD license as follows:
  *
@@ -58,10 +59,34 @@ GLOG_MODULE_DEFINE("grilio-binder");
 #define RIL_BINDER_KEY_MODEM      "modem"
 #define RIL_BINDER_KEY_DEV        "dev"
 #define RIL_BINDER_KEY_NAME       "name"
+#define RIL_BINDER_KEY_INTERFACE  "interface"
 
-#define RIL_BINDER_DEFAULT_MODEM  "/ril_0"
-#define RIL_BINDER_DEFAULT_DEV    "/dev/hwbinder"
-#define RIL_BINDER_DEFAULT_NAME   "slot1"
+#define RIL_BINDER_DEFAULT_MODEM     "/ril_0"
+#define RIL_BINDER_DEFAULT_DEV       "/dev/hwbinder"
+#define RIL_BINDER_DEFAULT_NAME      "slot1"
+
+#define DEFAULT_INTERFACE RADIO_INTERFACE_1_2
+
+#define RIL_PROTO_IP_STR     "IP"
+#define RIL_PROTO_IPV6_STR   "IPV6"
+#define RIL_PROTO_IPV4V6_STR "IPV4V6"
+
+/* Preferred network types as defined in ril.h */
+enum ril_pref_net_type {
+    PREF_NET_TYPE_GSM_WCDMA                 = 0,
+    PREF_NET_TYPE_GSM_ONLY                  = 1,
+    PREF_NET_TYPE_WCDMA                     = 2,
+    PREF_NET_TYPE_GSM_WCDMA_AUTO            = 3,
+    PREF_NET_TYPE_CDMA_EVDO_AUTO            = 4,
+    PREF_NET_TYPE_CDMA_ONLY                 = 5,
+    PREF_NET_TYPE_EVDO_ONLY                 = 6,
+    PREF_NET_TYPE_GSM_WCDMA_CDMA_EVDO_AUTO  = 7,
+    PREF_NET_TYPE_LTE_CDMA_EVDO             = 8,
+    PREF_NET_TYPE_LTE_GSM_WCDMA             = 9,
+    PREF_NET_TYPE_LTE_CMDA_EVDO_GSM_WCDMA   = 10,
+    PREF_NET_TYPE_LTE_ONLY                  = 11,
+    PREF_NET_TYPE_LTE_WCDMA                 = 12
+};
 
 enum {
     RADIO_EVENT_INDICATION,
@@ -281,6 +306,39 @@ ril_binder_radio_apn_types_for_profile(
          */
         return RADIO_APN_TYPE_MMS;
     }
+}
+
+static
+const char *
+radio_pdp_protocol_type_to_str(enum radio_pdp_protocol_type type)
+{
+    switch (type) {
+    case RADIO_PDP_PROTOCOL_IP:
+        return RIL_PROTO_IP_STR;
+    case RADIO_PDP_PROTOCOL_IPV6:
+        return RIL_PROTO_IPV6_STR;
+    case RADIO_PDP_PROTOCOL_IPV4V6:
+        return RIL_PROTO_IPV4V6_STR;
+    default:
+        return "";
+    }
+}
+
+static
+const char*
+ril_binder_radio_interface_name(
+    RADIO_INTERFACE interface)
+{
+    switch (interface) {
+    case RADIO_INTERFACE_1_0: return "radio@1.0";
+    case RADIO_INTERFACE_1_1: return "radio@1.1";
+    case RADIO_INTERFACE_1_2: return "radio@1.2";
+    case RADIO_INTERFACE_1_3: return "radio@1.3";
+    case RADIO_INTERFACE_1_4: return "radio@1.4";
+    case RADIO_INTERFACE_COUNT:
+        break;
+    }
+    return NULL;
 }
 
 /*==========================================================================*
@@ -1742,6 +1800,48 @@ ril_binder_radio_decode_byte_array_to_hex(
     return FALSE;
 }
 
+static
+void
+ril_binder_decode_vec_utf8_as_string(
+    GByteArray* out,
+    const GBinderHidlVec *vec,
+    const char *separator)
+{
+    const GBinderHidlString* elem = vec->data.ptr;
+    char str[256];
+    gchar *p = str;
+    int i;
+
+    bzero(str, sizeof(str));
+    for (i = 0; i < vec->count; i++) {
+        if (i) {
+            p += g_strlcat(p, separator, sizeof(str) - (p - str));
+        }
+        p += g_strlcat(p, elem->data.str, sizeof(str) - (p - str));
+        elem++;
+    }
+    grilio_encode_utf8(out, str);
+}
+
+static
+void
+ril_binder_radio_decode_data_call_1_4(
+    GByteArray* out,
+    const RadioDataCall_1_4* call)
+{
+    grilio_encode_int32(out, call->cause);
+    grilio_encode_int32(out, call->suggestedRetryTime);
+    grilio_encode_int32(out, call->cid);
+    grilio_encode_int32(out, call->active);
+    grilio_encode_utf8(out, radio_pdp_protocol_type_to_str(call->type));
+    grilio_encode_utf8(out, call->ifname.data.str);
+    ril_binder_decode_vec_utf8_as_string(out, &call->addresses, " ");
+    ril_binder_decode_vec_utf8_as_string(out, &call->dnses, " ");
+    ril_binder_decode_vec_utf8_as_string(out, &call->gateways, " ");
+    ril_binder_decode_vec_utf8_as_string(out, &call->pcscf, " ");
+    grilio_encode_int32(out, call->mtu);
+}
+
 /**
  * @param cardStatus ICC card status as defined by CardStatus in types.hal
  */
@@ -1813,6 +1913,26 @@ ril_binder_radio_decode_icc_card_status_1_2(
 }
 
 /**
+ * @param cardStatus ICC card status as defined by CardStatus in types.hal
+ */
+static
+gboolean
+ril_binder_radio_decode_icc_card_status_1_4(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean ok = FALSE;
+    const RadioCardStatus_1_4* sim = gbinder_reader_read_hidl_struct
+        (in, RadioCardStatus_1_4);
+
+    if (sim) {
+        ril_binder_radio_decode_icc_card_status(&sim->base, out);
+        ok = TRUE;
+    }
+    return ok;
+}
+
+/**
  * @param voiceRegResponse VoiceRegStateResult defined in types.hal
  */
 static
@@ -1847,6 +1967,31 @@ ril_binder_radio_decode_data_reg_state(
 {
     const RadioDataRegStateResult* reg = gbinder_reader_read_hidl_struct
         (in, RadioDataRegStateResult);
+
+    if (reg) {
+        grilio_encode_int32(out, 6);
+        grilio_encode_format(out, "%d", reg->regState);
+        grilio_encode_utf8(out, ""); /* slac */
+        grilio_encode_utf8(out, ""); /* sci */
+        grilio_encode_format(out, "%d", reg->rat);
+        grilio_encode_format(out, "%d", reg->reasonDataDenied);
+        grilio_encode_format(out, "%d", reg->maxDataCalls);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/**
+ * @param dataRegResponse DataRegStateResult defined in types.hal
+ */
+static
+gboolean
+ril_binder_radio_decode_data_reg_state_1_4(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    const RadioDataRegStateResult_1_4* reg = gbinder_reader_read_hidl_struct
+        (in, RadioDataRegStateResult_1_4);
 
     if (reg) {
         grilio_encode_int32(out, 6);
@@ -2119,6 +2264,33 @@ ril_binder_radio_decode_data_call_list(
 }
 
 /**
+ * @param dcResponse List of SetupDataCallResult as defined in types.hal
+ */
+static
+gboolean
+ril_binder_radio_decode_data_call_list_1_4(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean ok = FALSE;
+    gsize count = 0;
+    const RadioDataCall_1_4* calls = gbinder_reader_read_hidl_type_vec
+        (in, RadioDataCall_1_4, &count);
+
+    if (calls) {
+        guint i;
+
+        grilio_encode_int32(out, DATA_CALL_VERSION);
+        grilio_encode_int32(out, count);
+        for (i = 0; i < count; i++) {
+            ril_binder_radio_decode_data_call_1_4(out, calls + i);
+        }
+        ok = TRUE;
+    }
+    return ok;
+}
+
+/**
  * @param dcResponse SetupDataCallResult defined in types.hal
  */
 static
@@ -2140,6 +2312,27 @@ ril_binder_radio_decode_setup_data_call_result(
 }
 
 /**
+ * @param dcResponse SetupDataCallResult defined in types.hal
+ */
+static
+gboolean
+ril_binder_radio_decode_setup_data_call_result_1_4(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    const RadioDataCall_1_4* call = gbinder_reader_read_hidl_struct
+        (in, RadioDataCall_1_4);
+
+    if (call) {
+        grilio_encode_int32(out, DATA_CALL_VERSION);
+        grilio_encode_int32(out, 1);
+        ril_binder_radio_decode_data_call_1_4(out, call);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/**
  * @param nwType RadioPreferredNetworkType defined in types.hal
  */
 static
@@ -2151,6 +2344,61 @@ ril_binder_radio_decode_pref_network_type(
     gint32 pref;
 
     if (gbinder_reader_read_int32(in, &pref)) {
+        grilio_encode_int32(out, 1);
+        grilio_encode_int32(out, pref);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static
+gint32
+ril_binder_radio_raf_to_pref_mode(
+    gint32 raf)
+{
+    gint32 gen = 0;
+
+#define RADIO_GEN_2G (RAF_GSM | RAF_GPRS | RAF_EDGE)
+#define RADIO_GEN_3G (RAF_UMTS | RAF_HSDPA | RAF_HSUPA | RAF_HSPA | RAF_HSPAP)
+#define RADIO_GEN_4G (RAF_LTE | RAF_LTE_CA)
+
+    gen |= (raf & RADIO_GEN_2G) ? RADIO_GEN_2G : 0;
+    gen |= (raf & RADIO_GEN_3G) ? RADIO_GEN_3G : 0;
+    gen |= (raf & RADIO_GEN_4G) ? RADIO_GEN_4G : 0;
+
+    switch (gen) {
+    case RADIO_GEN_2G:
+        return PREF_NET_TYPE_GSM_ONLY;
+    case RADIO_GEN_2G | RADIO_GEN_3G:
+        return PREF_NET_TYPE_GSM_WCDMA;
+    case RADIO_GEN_2G | RADIO_GEN_3G | RADIO_GEN_4G:
+        return PREF_NET_TYPE_LTE_GSM_WCDMA;
+    case RADIO_GEN_3G | RADIO_GEN_4G:
+        return PREF_NET_TYPE_LTE_WCDMA;
+    case RADIO_GEN_4G:
+        return PREF_NET_TYPE_LTE_ONLY;
+    default:
+        /* Other combinations are not yet supported */
+        return PREF_NET_TYPE_GSM_ONLY;
+    }
+#undef RADIO_GEN_2G
+#undef RADIO_GEN_3G
+#undef RADIO_GEN_4G
+}
+
+/**
+ * @param networkTypeBitmap a 32-bit bitmap of RadioAccessFamily
+ */
+static
+gboolean
+ril_binder_radio_decode_pref_network_type_bitmap(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gint32 raf, pref;
+
+    if (gbinder_reader_read_int32(in, &raf)) {
+        pref = ril_binder_radio_raf_to_pref_mode(raf);
         grilio_encode_int32(out, 1);
         grilio_encode_int32(out, pref);
         return TRUE;
@@ -2241,6 +2489,55 @@ ril_binder_radio_decode_ussd(
     return FALSE;
 }
 
+static
+void
+ril_binder_radio_decode_signal_strength_common(
+    const RadioSignalStrengthGsm* gsm,
+    const RadioSignalStrengthCdma* cdma,
+    const RadioSignalStrengthEvdo* evdo,
+    const RadioSignalStrengthLte* lte,
+    const RadioSignalStrengthTdScdma* tdScdma,
+    const RadioSignalStrengthWcdma* wcdma,
+    GByteArray* out)
+{
+    /* GW_SignalStrength */
+    if (wcdma && wcdma->signalStrength <= 31 && gsm->signalStrength > 31) {
+        /*
+         * Presumably, 3G signal. The wcdma field did't exist in RIL
+         * socket times.
+         *
+         * Valid signal strength values for both 2G and 3G are (0-31, 99)
+         * as defined in TS 27.007 8.5
+         */
+        grilio_encode_int32(out, wcdma->signalStrength);
+        grilio_encode_int32(out, wcdma->bitErrorRate);
+    } else {
+        grilio_encode_int32(out, gsm->signalStrength);
+        grilio_encode_int32(out, gsm->bitErrorRate);
+    }
+
+    /* CDMA_SignalStrength */
+    grilio_encode_int32(out, cdma->dbm);
+    grilio_encode_int32(out, cdma->ecio);
+
+    /* EVDO_SignalStrength */
+    grilio_encode_int32(out, evdo->dbm);
+    grilio_encode_int32(out, evdo->ecio);
+    grilio_encode_int32(out, evdo->signalNoiseRatio);
+
+        /* LTE_SignalStrength_v8 */
+    grilio_encode_int32(out, lte->signalStrength);
+    grilio_encode_int32(out, lte->rsrp);
+    grilio_encode_int32(out, lte->rsrq);
+    grilio_encode_int32(out, lte->rssnr);
+    grilio_encode_int32(out, lte->cqi);
+    grilio_encode_int32(out, lte->timingAdvance);
+
+    /* TD_SCDMA_SignalStrength */
+    grilio_encode_int32(out, tdScdma->rscp);
+}
+
+
 /**
  * @param signalStrength SignalStrength information as defined in types.hal
  */
@@ -2254,29 +2551,12 @@ ril_binder_radio_decode_signal_strength(
         (in, RadioSignalStrength);
 
     if (strength) {
-        /* GW_SignalStrength */
-        grilio_encode_int32(out, strength->gw.signalStrength);
-        grilio_encode_int32(out, strength->gw.bitErrorRate);
+        RadioSignalStrengthTdScdma tdscdma;
 
-        /* CDMA_SignalStrength */
-        grilio_encode_int32(out, strength->cdma.dbm);
-        grilio_encode_int32(out, strength->cdma.ecio);
-
-        /* EVDO_SignalStrength */
-        grilio_encode_int32(out, strength->evdo.dbm);
-        grilio_encode_int32(out, strength->evdo.ecio);
-        grilio_encode_int32(out, strength->evdo.signalNoiseRatio);
-
-        /* LTE_SignalStrength_v8 */
-        grilio_encode_int32(out, strength->lte.signalStrength);
-        grilio_encode_int32(out, strength->lte.rsrp);
-        grilio_encode_int32(out, strength->lte.rsrq);
-        grilio_encode_int32(out, strength->lte.rssnr);
-        grilio_encode_int32(out, strength->lte.cqi);
-        grilio_encode_int32(out, strength->lte.timingAdvance);
-
-        /* TD_SCDMA_SignalStrength */
-        grilio_encode_int32(out, strength->tdScdma.rscp);
+        tdscdma.rscp = strength->tdScdma.rscp;
+        ril_binder_radio_decode_signal_strength_common(&strength->gw,
+                &strength->cdma, &strength->evdo, &strength->lte,
+                &tdscdma, NULL, out);
         return TRUE;
     }
     return FALSE;
@@ -2295,44 +2575,36 @@ ril_binder_radio_decode_signal_strength_1_2(
         (in, RadioSignalStrength_1_2);
 
     if (strength) {
-        const RadioSignalStrengthGsm* gsm = &strength->gw;
-        const RadioSignalStrengthWcdma* wcdma = &strength->wcdma.base;
+        RadioSignalStrengthTdScdma tdscdma;
 
-        /* GW_SignalStrength */
-        if (wcdma->signalStrength <= 31 && gsm->signalStrength > 31) {
-            /*
-             * Presumably, 3G signal. The wcdma field did't exist in RIL
-             * socket times.
-             *
-             * Valid signal strength values for both 2G and 3G are (0-31, 99)
-             * as defined in TS 27.007 8.5
-             */
-            grilio_encode_int32(out, wcdma->signalStrength);
-            grilio_encode_int32(out, wcdma->bitErrorRate);
-        } else {
-            grilio_encode_int32(out, gsm->signalStrength);
-            grilio_encode_int32(out, gsm->bitErrorRate);
-        }
+        tdscdma.rscp = strength->tdScdma.rscp;
+        ril_binder_radio_decode_signal_strength_common(&strength->gw,
+                &strength->cdma, &strength->evdo, &strength->lte,
+                &tdscdma, &strength->wcdma.base, out);
+        return TRUE;
+    }
+    return FALSE;
+}
 
-        /* CDMA_SignalStrength */
-        grilio_encode_int32(out, strength->cdma.dbm);
-        grilio_encode_int32(out, strength->cdma.ecio);
+/**
+ * @param signalStrength SignalStrength information as defined in types.hal
+ */
+static
+gboolean
+ril_binder_radio_decode_signal_strength_1_4(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    const RadioSignalStrength_1_4* strength = gbinder_reader_read_hidl_struct
+        (in, RadioSignalStrength_1_4);
 
-        /* EVDO_SignalStrength */
-        grilio_encode_int32(out, strength->evdo.dbm);
-        grilio_encode_int32(out, strength->evdo.ecio);
-        grilio_encode_int32(out, strength->evdo.signalNoiseRatio);
+    if (strength) {
+        RadioSignalStrengthTdScdma tdscdma;
 
-        /* LTE_SignalStrength_v8 */
-        grilio_encode_int32(out, strength->lte.signalStrength);
-        grilio_encode_int32(out, strength->lte.rsrp);
-        grilio_encode_int32(out, strength->lte.rsrq);
-        grilio_encode_int32(out, strength->lte.rssnr);
-        grilio_encode_int32(out, strength->lte.cqi);
-        grilio_encode_int32(out, strength->lte.timingAdvance);
-
-        /* TD_SCDMA_SignalStrength */
-        grilio_encode_int32(out, strength->tdScdma.rscp);
+        tdscdma.rscp = strength->tdscdma.rscp;
+        ril_binder_radio_decode_signal_strength_common(&strength->gsm,
+                &strength->cdma, &strength->evdo, &strength->lte,
+                &tdscdma, &strength->wcdma.base, out);
         return TRUE;
     }
     return FALSE;
@@ -2620,6 +2892,20 @@ ril_binder_radio_decode_cell_info_header_1_2(
 
 static
 void
+ril_binder_radio_decode_cell_info_header_1_4(
+    GByteArray* out,
+    const RadioCellInfo_1_4* cell,
+    const RADIO_CELL_INFO_TYPE cellInfoType)
+{
+    grilio_encode_int32(out, cellInfoType);
+    grilio_encode_int32(out, cell->registered);
+    grilio_encode_int32(out, 0); /* timeStampType */
+    grilio_encode_int32(out, 0); /* timeStamp */
+    grilio_encode_int32(out, 0); /* timeStamp */
+}
+
+static
+void
 ril_binder_radio_decode_cell_info_gsm_1_2(
     GByteArray* out,
     const RadioCellInfo_1_2* cell)
@@ -2832,6 +3118,90 @@ ril_binder_radio_decode_cell_info_list_1_2(
                 break;
             case RADIO_CELL_INFO_TD_SCDMA:
                 ril_binder_radio_decode_cell_info_tdscdma_1_2(out, cell);
+                break;
+            }
+        }
+        ok = TRUE;
+    }
+    return ok;
+}
+
+/**
+ * @param cellInfo List of current cell information known to radio
+ */
+static
+gboolean
+ril_binder_radio_decode_cell_info_list_1_4(
+    GBinderReader* in,
+    GByteArray* out)
+{
+    gboolean ok = FALSE;
+    gsize count = 0;
+    const RadioCellInfo_1_4* cells = gbinder_reader_read_hidl_type_vec
+        (in, RadioCellInfo_1_4, &count);
+
+    if (cells) {
+        guint i, n = 0;
+
+        /* Count supported types */
+        for (i = 0; i < count; i++) {
+            switch (cells[i].cellInfoType) {
+            case RADIO_CELL_INFO_1_4_GSM:
+            case RADIO_CELL_INFO_1_4_CDMA:
+            case RADIO_CELL_INFO_1_4_WCDMA:
+            case RADIO_CELL_INFO_1_4_LTE:
+            case RADIO_CELL_INFO_1_4_TD_SCDMA:
+                n++;
+                break;
+            /* Do not count 5G cells for now */
+            case RADIO_CELL_INFO_1_4_NR:
+                break;
+            }
+        }
+
+        grilio_encode_int32(out, n);
+
+        for (i = 0; i < count; i++) {
+            const RadioCellInfo_1_4* cell = cells + i;
+
+            switch (cell->cellInfoType) {
+            case RADIO_CELL_INFO_1_4_GSM:
+                ril_binder_radio_decode_cell_info_header_1_4(out,
+                        cell, RADIO_CELL_INFO_GSM);
+                ril_binder_radio_decode_cell_info_gsm(out,
+                        &cell->info.gsm.cellIdentityGsm.base,
+                        &cell->info.gsm.signalStrengthGsm);
+                break;
+            case RADIO_CELL_INFO_1_4_CDMA:
+                ril_binder_radio_decode_cell_info_header_1_4(out,
+                        cell, RADIO_CELL_INFO_CDMA);
+                ril_binder_radio_decode_cell_info_cdma(out,
+                        &cell->info.cdma.cellIdentityCdma.base,
+                        &cell->info.cdma.signalStrengthCdma,
+                        &cell->info.cdma.signalStrengthEvdo);
+                break;
+            case RADIO_CELL_INFO_1_4_LTE:
+                ril_binder_radio_decode_cell_info_header_1_4(out,
+                        cell, RADIO_CELL_INFO_LTE);
+                ril_binder_radio_decode_cell_info_lte(out,
+                        &cell->info.lte.base.cellIdentityLte.base,
+                        &cell->info.lte.base.signalStrengthLte);
+                break;
+            case RADIO_CELL_INFO_1_4_WCDMA:
+                ril_binder_radio_decode_cell_info_header_1_4(out,
+                        cell, RADIO_CELL_INFO_WCDMA);
+                ril_binder_radio_decode_cell_info_wcdma(out,
+                        &cell->info.wcdma.cellIdentityWcdma.base,
+                        &cell->info.wcdma.signalStrengthWcdma.base);
+                break;
+            case RADIO_CELL_INFO_1_4_TD_SCDMA:
+                ril_binder_radio_decode_cell_info_header_1_4(out,
+                        cell, RADIO_CELL_INFO_TD_SCDMA);
+                ril_binder_radio_decode_cell_info_tdscdma(out,
+                        &cell->info.tdscdma.cellIdentityTdscdma.base,
+                        cell->info.tdscdma.signalStrengthTdscdma.rscp);
+                break;
+            case RADIO_CELL_INFO_1_4_NR:
                 break;
             }
         }
@@ -3573,6 +3943,66 @@ static const RilBinderRadioCall ril_binder_radio_calls_1_2[] = {
     }
 };
 
+static const RilBinderRadioCall ril_binder_radio_calls_1_4[] = {
+    {
+        0,
+        0,
+        RADIO_RESP_GET_ICC_CARD_STATUS_RESPONSE_1_4,
+        NULL,
+        ril_binder_radio_decode_icc_card_status_1_4,
+        "getIccCardStatus_1_4"
+    },{
+        RIL_REQUEST_SETUP_DATA_CALL,
+        RADIO_REQ_SETUP_DATA_CALL_1_2, /* Using setupDataCall_1_2 */
+        RADIO_RESP_SETUP_DATA_CALL_RESPONSE_1_4,
+        ril_binder_radio_encode_setup_data_call_1_2,
+        ril_binder_radio_decode_setup_data_call_result_1_4,
+        "setupDataCall_1_4"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_DATA_REGISTRATION_STATE_RESPONSE_1_4,
+        NULL,
+        ril_binder_radio_decode_data_reg_state_1_4,
+        "getDataRegistrationState_1_4"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_DATA_CALL_LIST_RESPONSE_1_4,
+        NULL,
+        ril_binder_radio_decode_call_list_1_2,
+        "getDataCallList_1_4"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_CELL_INFO_LIST_RESPONSE_1_4,
+        NULL,
+        ril_binder_radio_decode_cell_info_list_1_4,
+        "getCellInfoList_1_4"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_SIGNAL_STRENGTH_1_4,
+        NULL,
+        ril_binder_radio_decode_signal_strength_1_4,
+        "getSignalStrength_1_4"
+    },{
+        RADIO_REQ_SET_PREFERRED_NETWORK_TYPE,
+        0,
+        RADIO_RESP_SET_PREFERRED_NETWORK_TYPE_BITMAP,
+        ril_binder_radio_encode_ints,
+        NULL,
+        "setPreferredNetworkTypeBitmap_1_4"
+    },{
+        0,
+        0,
+        RADIO_RESP_GET_PREFERRED_NETWORK_TYPE_BITMAP,
+        NULL,
+        ril_binder_radio_decode_pref_network_type_bitmap,
+        "getPreferredNetworkTypeBitmap_1_4"
+    }
+};
+
 /*==========================================================================*
  * Events
  *==========================================================================*/
@@ -3702,6 +4132,25 @@ static const RilBinderRadioEvent ril_binder_radio_events_1_2[] = {
         RADIO_IND_CURRENT_SIGNAL_STRENGTH_1_2,
         ril_binder_radio_decode_signal_strength_1_2,
         "currentSignalStrength_1_2"
+    }
+};
+
+static const RilBinderRadioEvent ril_binder_radio_events_1_4[] = {
+    {
+        RIL_UNSOL_CELL_INFO_LIST,
+        RADIO_IND_CELL_INFO_LIST_1_4,
+        ril_binder_radio_decode_cell_info_list_1_4,
+        "cellInfoList_1_4"
+    },{
+        RIL_UNSOL_DATA_CALL_LIST_CHANGED,
+        RADIO_IND_DATA_CALL_LIST_CHANGED_1_4,
+        ril_binder_radio_decode_data_call_list_1_4,
+        "dataCallListChanged_1_4"
+    },{
+        RIL_UNSOL_SIGNAL_STRENGTH,
+        RADIO_IND_CURRENT_SIGNAL_STRENGTH_1_4,
+        ril_binder_radio_decode_signal_strength_1_4,
+        "currentSignalStrength_1_4"
     }
 };
 
@@ -4249,6 +4698,26 @@ ril_binder_radio_arg_name(
         RIL_BINDER_DEFAULT_NAME);
 }
 
+static
+RADIO_INTERFACE
+ril_binder_radio_arg_interface(
+    GHashTable* args)
+{
+    const char *name = ril_binder_radio_arg_value(args,
+        RIL_BINDER_KEY_INTERFACE, NULL);
+
+    if (name) {
+        RADIO_INTERFACE i;
+
+        for (i = RADIO_INTERFACE_1_0; i < RADIO_INTERFACE_COUNT; i++ ) {
+            if (!g_strcmp0(name, ril_binder_radio_interface_name(i))) {
+                return i;
+            }
+        }
+    }
+    return DEFAULT_INTERFACE;
+}
+
 gboolean
 ril_binder_radio_init_base(
     RilBinderRadio* self,
@@ -4256,11 +4725,12 @@ ril_binder_radio_init_base(
 {
     const char* dev = ril_binder_radio_arg_dev(args);
     const char* name = ril_binder_radio_arg_name(args);
+    const RADIO_INTERFACE interface = ril_binder_radio_arg_interface(args);
 
-    GDEBUG("%s %s %s %s", self->parent.log_prefix,
-        ril_binder_radio_arg_modem(args), dev, name);
-    self->radio = radio_instance_new_with_version(dev, name,
-        RADIO_INTERFACE_1_2);
+    GDEBUG("%s %s %s %s %s", self->parent.log_prefix,
+        ril_binder_radio_arg_modem(args), dev, name,
+        ril_binder_radio_interface_name(interface));
+    self->radio = radio_instance_new_with_version(dev, name, interface);
     if (self->radio) {
         RilBinderRadioPriv* priv = self->priv;
         GBinderServiceManager* sm = gbinder_servicemanager_new(dev);
@@ -4286,6 +4756,18 @@ ril_binder_radio_init_base(
                 ARRAY_AND_COUNT(ril_binder_radio_calls_1_2));
             ril_binder_radio_init_unsol_map(priv->unsol_map[v],
                 ARRAY_AND_COUNT(ril_binder_radio_events_1_2));
+        }
+
+        if (self->radio->version >= RADIO_INTERFACE_1_4) {
+            /* android.hardware.radio@1.4 */
+            v = RADIO_INTERFACE_1_4;
+            priv->req_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+            priv->resp_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+            priv->unsol_map[v] = g_hash_table_new(g_direct_hash,g_direct_equal);
+            ril_binder_radio_init_call_maps(priv->req_map[v], priv->resp_map[v],
+                ARRAY_AND_COUNT(ril_binder_radio_calls_1_4));
+            ril_binder_radio_init_unsol_map(priv->unsol_map[v],
+                ARRAY_AND_COUNT(ril_binder_radio_events_1_4));
         }
 
         priv->oemhook = ril_binder_oemhook_new(sm, self->radio);
