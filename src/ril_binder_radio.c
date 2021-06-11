@@ -282,6 +282,24 @@ ril_binder_radio_init_unsol_map(
 }
 
 static
+void
+ril_binder_radio_init_version(
+    RilBinderRadioPriv* priv,
+    RADIO_INTERFACE v,
+    const RilBinderRadioCall* calls,
+    guint num_calls,
+    const RilBinderRadioEvent* events,
+    guint num_events)
+{
+    priv->req_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+    priv->resp_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+    priv->unsol_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
+    ril_binder_radio_init_unsol_map(priv->unsol_map[v], events, num_events);
+    ril_binder_radio_init_call_maps(priv->req_map[v], priv->resp_map[v],
+        calls, num_calls);
+}
+
+static
 RADIO_APN_TYPES
 ril_binder_radio_apn_types_for_profile(
     RADIO_DATA_PROFILE_ID profile_id)
@@ -4734,39 +4752,23 @@ ril_binder_radio_init_base(
     if (self->radio) {
         RilBinderRadioPriv* priv = self->priv;
         GBinderServiceManager* sm = gbinder_servicemanager_new(dev);
-        RADIO_INTERFACE v;
 
         /* android.hardware.radio@1.0 */
-        v = RADIO_INTERFACE_1_0;
-        priv->req_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
-        priv->resp_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
-        priv->unsol_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
-        ril_binder_radio_init_call_maps(priv->req_map[v], priv->resp_map[v],
-            ARRAY_AND_COUNT(ril_binder_radio_calls_1_0));
-        ril_binder_radio_init_unsol_map(priv->unsol_map[v],
+        ril_binder_radio_init_version(priv, RADIO_INTERFACE_1_0,
+            ARRAY_AND_COUNT(ril_binder_radio_calls_1_0),
             ARRAY_AND_COUNT(ril_binder_radio_events_1_0));
 
-        if (self->radio->version >= RADIO_INTERFACE_1_2) {
+         if (self->radio->version >= RADIO_INTERFACE_1_2) {
             /* android.hardware.radio@1.2 */
-            v = RADIO_INTERFACE_1_2;
-            priv->req_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
-            priv->resp_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
-            priv->unsol_map[v] = g_hash_table_new(g_direct_hash,g_direct_equal);
-            ril_binder_radio_init_call_maps(priv->req_map[v], priv->resp_map[v],
-                ARRAY_AND_COUNT(ril_binder_radio_calls_1_2));
-            ril_binder_radio_init_unsol_map(priv->unsol_map[v],
-                ARRAY_AND_COUNT(ril_binder_radio_events_1_2));
+             ril_binder_radio_init_version(priv, RADIO_INTERFACE_1_2,
+                 ARRAY_AND_COUNT(ril_binder_radio_calls_1_2),
+                 ARRAY_AND_COUNT(ril_binder_radio_events_1_2));
         }
 
         if (self->radio->version >= RADIO_INTERFACE_1_4) {
             /* android.hardware.radio@1.4 */
-            v = RADIO_INTERFACE_1_4;
-            priv->req_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
-            priv->resp_map[v] = g_hash_table_new(g_direct_hash, g_direct_equal);
-            priv->unsol_map[v] = g_hash_table_new(g_direct_hash,g_direct_equal);
-            ril_binder_radio_init_call_maps(priv->req_map[v], priv->resp_map[v],
-                ARRAY_AND_COUNT(ril_binder_radio_calls_1_4));
-            ril_binder_radio_init_unsol_map(priv->unsol_map[v],
+            ril_binder_radio_init_version(priv, RADIO_INTERFACE_1_4,
+                ARRAY_AND_COUNT(ril_binder_radio_calls_1_4),
                 ARRAY_AND_COUNT(ril_binder_radio_events_1_4));
         }
 
