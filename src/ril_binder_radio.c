@@ -200,6 +200,33 @@ ril_binder_radio_write_single_data_profile(
 
 static
 void
+ril_binder_radio_write_data_profile_strings_1_4(
+    GBinderWriter* w,
+    const RadioDataProfile_1_4* dp,
+    guint idx,
+    guint i)
+{
+    const guint off = sizeof(*dp) * i;
+
+    /* Write the string data in the right order */
+    ril_binder_radio_write_hidl_string_data2(w, dp, apn, idx, off);
+    ril_binder_radio_write_hidl_string_data2(w, dp, user, idx, off);
+    ril_binder_radio_write_hidl_string_data2(w, dp, password, idx, off);
+}
+
+inline
+static
+void
+ril_binder_radio_write_single_data_profile_1_4(
+    GBinderWriter* writer,
+    const RadioDataProfile_1_4* dp)
+{
+    ril_binder_radio_write_data_profile_strings_1_4(writer, dp,
+        gbinder_writer_append_buffer_object(writer, dp, sizeof(*dp)), 0);
+}
+
+static
+void
 ril_binder_radio_take_string(
     GBinderLocalRequest* out,
     GBinderHidlString* str,
@@ -324,6 +351,62 @@ ril_binder_radio_apn_types_for_profile(
          */
         return RADIO_APN_TYPE_MMS;
     }
+}
+
+static
+RADIO_ACCESS_NETWORK
+ril_radio_tech_to_radio_access_network(
+    RADIO_TECH tech)
+{
+    RADIO_ACCESS_NETWORK ran = RADIO_ACCESS_NETWORK_UNKNOWN;
+    switch (tech) {
+    case RADIO_TECH_GPRS:
+    case RADIO_TECH_EDGE:
+    case RADIO_TECH_GSM:
+        ran = RADIO_ACCESS_NETWORK_GERAN;
+        break;
+    case RADIO_TECH_UMTS:
+    case RADIO_TECH_HSDPA:
+    case RADIO_TECH_HSPAP:
+    case RADIO_TECH_HSUPA:
+    case RADIO_TECH_HSPA:
+    case RADIO_TECH_TD_SCDMA:
+        ran = RADIO_ACCESS_NETWORK_UTRAN;
+        break;
+    case RADIO_TECH_IS95A:
+    case RADIO_TECH_IS95B:
+    case RADIO_TECH_ONE_X_RTT:
+    case RADIO_TECH_EVDO_0:
+    case RADIO_TECH_EVDO_A:
+    case RADIO_TECH_EVDO_B:
+    case RADIO_TECH_EHRPD:
+        ran = RADIO_ACCESS_NETWORK_CDMA2000;
+        break;
+    case RADIO_TECH_LTE:
+    case RADIO_TECH_LTE_CA:
+        ran = RADIO_ACCESS_NETWORK_EUTRAN;
+        break;
+    case RADIO_TECH_IWLAN:
+        ran = RADIO_ACCESS_NETWORK_IWLAN;
+        break;
+    case RADIO_TECH_UNKNOWN:
+        break;
+    }
+    return ran;
+}
+
+static
+enum radio_pdp_protocol_type
+radio_pdp_protocol_str_to_type(const char *name)
+{
+    if (g_strcmp0(name, RIL_PROTO_IPV6_STR) == 0) {
+        return RADIO_PDP_PROTOCOL_IPV6;
+    } else if (g_strcmp0(name, RIL_PROTO_IPV4V6_STR) == 0) {
+        return RADIO_PDP_PROTOCOL_IPV4V6;
+    } else if (g_strcmp0(name, RIL_PROTO_IP_STR) == 0) {
+        return RADIO_PDP_PROTOCOL_IP;
+    }
+    return RADIO_PDP_PROTOCOL_UNKNOWN;
 }
 
 static
@@ -837,40 +920,7 @@ ril_binder_radio_encode_setup_data_call_1_2(
             tech -= 2;
         }
 
-        ran = RADIO_ACCESS_NETWORK_UNKNOWN;
-        switch ((RADIO_TECH)tech) {
-        case RADIO_TECH_GPRS:
-        case RADIO_TECH_EDGE:
-        case RADIO_TECH_GSM:
-            ran = RADIO_ACCESS_NETWORK_GERAN;
-            break;
-        case RADIO_TECH_UMTS:
-        case RADIO_TECH_HSDPA:
-        case RADIO_TECH_HSPAP:
-        case RADIO_TECH_HSUPA:
-        case RADIO_TECH_HSPA:
-        case RADIO_TECH_TD_SCDMA:
-            ran = RADIO_ACCESS_NETWORK_UTRAN;
-            break;
-        case RADIO_TECH_IS95A:
-        case RADIO_TECH_IS95B:
-        case RADIO_TECH_ONE_X_RTT:
-        case RADIO_TECH_EVDO_0:
-        case RADIO_TECH_EVDO_A:
-        case RADIO_TECH_EVDO_B:
-        case RADIO_TECH_EHRPD:
-            ran = RADIO_ACCESS_NETWORK_CDMA2000;
-            break;
-        case RADIO_TECH_LTE:
-        case RADIO_TECH_LTE_CA:
-            ran = RADIO_ACCESS_NETWORK_EUTRAN;
-            break;
-        case RADIO_TECH_IWLAN:
-            ran = RADIO_ACCESS_NETWORK_IWLAN;
-            break;
-        case RADIO_TECH_UNKNOWN:
-            break;
-        }
+        ran = ril_radio_tech_to_radio_access_network((RADIO_TECH)tech);
 
         /* Initialize the writer and the data to be written */
         gbinder_local_request_init_writer(out, &writer);
@@ -895,6 +945,100 @@ ril_binder_radio_encode_setup_data_call_1_2(
         /* TODO: provide the actual roaming status? */
         gbinder_writer_append_bool(&writer, TRUE);  /* roamingAllowed */
         gbinder_writer_append_bool(&writer, FALSE); /* isRoaming */
+        gbinder_writer_append_int32(&writer, RADIO_DATA_REQUEST_REASON_NORMAL);
+        gbinder_writer_append_hidl_string_vec(&writer, NULL, 0); /* addresses */
+        gbinder_writer_append_hidl_string_vec(&writer, NULL, 0); /* dnses */
+        ok = TRUE;
+    } else {
+        g_free(apn);
+        g_free(user);
+        g_free(password);
+        g_free(proto);
+    }
+
+    g_free(profile_str);
+    g_free(tech_str);
+    g_free(auth_str);
+    return ok;
+}
+
+/**
+ * @param int32_t Serial number of request.
+ * @param RadioTechnology Radio technology to use.
+ * @param DataProfileInfo Data profile info.
+ * @param bool roamingAllowed Indicating data roaming is allowed or not.
+ */
+static
+gboolean
+ril_binder_radio_encode_setup_data_call_1_4(
+    GRilIoRequest* in,
+    GBinderLocalRequest* out)
+{
+    gboolean ok = FALSE;
+    GRilIoParser parser;
+    gint32 count, tech, auth, profile_id;
+    char* profile_str = NULL;
+    char* tech_str = NULL;
+    char* auth_str = NULL;
+    char* apn = NULL;
+    char* user = NULL;
+    char* password = NULL;
+    char* proto = NULL;
+
+    ril_binder_radio_init_parser(&parser, in);
+    if (grilio_parser_get_int32(&parser, &count) && count == 7 &&
+        (tech_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(tech_str, 10, &tech) &&
+        (profile_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(profile_str, 10, &profile_id) &&
+        (apn = grilio_parser_get_utf8(&parser)) != NULL &&
+        (user = grilio_parser_get_utf8(&parser)) != NULL &&
+        (password = grilio_parser_get_utf8(&parser)) != NULL &&
+        (auth_str = grilio_parser_get_utf8(&parser)) != NULL &&
+        gutil_parse_int(auth_str, 10, &auth) &&
+        (proto = grilio_parser_get_utf8(&parser)) != NULL) {
+        GBinderWriter writer;
+        RadioDataProfile_1_4* profile;
+        RADIO_ACCESS_NETWORK ran;
+
+        /* ril.h has this to say about the radio tech parameter:
+         *
+         * ((const char **)data)[0] Radio technology to use: 0-CDMA,
+         *                          1-GSM/UMTS, 2... for values above 2
+         *                          this is RIL_RadioTechnology + 2.
+         *
+         * Makes little sense but it is what it is.
+         */
+        if (tech > 4) {
+            tech -= 2;
+        }
+
+        ran = ril_radio_tech_to_radio_access_network((RADIO_TECH)tech);
+
+        /* Initialize the writer and the data to be written */
+        gbinder_local_request_init_writer(out, &writer);
+
+        profile = gbinder_writer_new0(&writer, RadioDataProfile_1_4);
+        ril_binder_radio_take_string(out, &profile->apn, apn);
+        ril_binder_radio_take_string(out, &profile->user, user);
+        ril_binder_radio_take_string(out, &profile->password, password);
+
+        profile->protocol = radio_pdp_protocol_str_to_type(proto);
+        profile->roamingProtocol = profile->protocol;
+        profile->profileId = profile_id;
+        profile->authType = auth;
+        profile->enabled = TRUE;
+        profile->supportedApnTypesBitmap =
+            ril_binder_radio_apn_types_for_profile(profile_id);
+        profile->preferred = TRUE;
+
+        /* Write the parcel */
+        gbinder_writer_append_int32(&writer, grilio_request_serial(in));
+        gbinder_writer_append_int32(&writer, ran); /* accessNetwork */
+        ril_binder_radio_write_single_data_profile_1_4(&writer, profile);
+        gbinder_writer_append_bool(&writer, TRUE);  /* roamingAllowed */
+
+        /* Continue writing the parcel */
         gbinder_writer_append_int32(&writer, RADIO_DATA_REQUEST_REASON_NORMAL);
         gbinder_writer_append_hidl_string_vec(&writer, NULL, 0); /* addresses */
         gbinder_writer_append_hidl_string_vec(&writer, NULL, 0); /* dnses */
@@ -3971,9 +4115,9 @@ static const RilBinderRadioCall ril_binder_radio_calls_1_4[] = {
         "getIccCardStatus_1_4"
     },{
         RIL_REQUEST_SETUP_DATA_CALL,
-        RADIO_REQ_SETUP_DATA_CALL_1_2, /* Using setupDataCall_1_2 */
+        RADIO_REQ_SETUP_DATA_CALL_1_4,
         RADIO_RESP_SETUP_DATA_CALL_RESPONSE_1_4,
-        ril_binder_radio_encode_setup_data_call_1_2,
+        ril_binder_radio_encode_setup_data_call_1_4,
         ril_binder_radio_decode_setup_data_call_result_1_4,
         "setupDataCall_1_4"
     },{
