@@ -1,5 +1,5 @@
 Name: ofono-ril-binder-plugin
-Version: 1.2.5
+Version: 1.2.6
 Release: 1
 Summary: Ofono RIL binder transport plugin
 License: BSD
