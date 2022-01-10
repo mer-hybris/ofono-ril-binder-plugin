@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2018-2021 Jolla Ltd.
- * Copyright (C) 2018-2021 Slava Monich <slava.monich@jolla.com>
+ * Copyright (C) 2018-2022 Jolla Ltd.
+ * Copyright (C) 2018-2022 Slava Monich <slava.monich@jolla.com>
  * Copyright (C) 2021 Open Mobile Platform LLC.
  *
  * You may use this file under the terms of BSD license as follows:
@@ -353,7 +353,7 @@ ril_binder_radio_interface_name(
     case RADIO_INTERFACE_1_2: return "radio@1.2";
     case RADIO_INTERFACE_1_3: return "radio@1.3";
     case RADIO_INTERFACE_1_4: return "radio@1.4";
-    case RADIO_INTERFACE_COUNT:
+    default:
         break;
     }
     return NULL;
@@ -1032,9 +1032,10 @@ ril_binder_radio_encode_call_forward_info(
     GRilIoParser parser;
     RadioCallForwardInfo* info = g_new0(RadioCallForwardInfo, 1);
     char* number = NULL;
+    gint32 status = 0;
 
     ril_binder_radio_init_parser(&parser, in);
-    if (grilio_parser_get_int32(&parser, &info->status) &&
+    if (grilio_parser_get_int32(&parser, &status) &&
         grilio_parser_get_int32(&parser, &info->reason) &&
         grilio_parser_get_int32(&parser, &info->serviceClass) &&
         grilio_parser_get_int32(&parser, &info->toa) &&
@@ -1052,6 +1053,7 @@ ril_binder_radio_encode_call_forward_info(
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
 
         /* Write the parent structure */
+        info->status = status;
         parent = gbinder_writer_append_buffer_object(&writer,
             info, sizeof(*info));
 
@@ -1346,16 +1348,18 @@ ril_binder_radio_encode_uicc_sub(
 {
     GRilIoParser parser;
     RadioSelectUiccSub* sub = g_new0(RadioSelectUiccSub, 1);
+    gint32 status = 0;
 
     gbinder_local_request_cleanup(out, g_free, sub);
     ril_binder_radio_init_parser(&parser, in);
     if (grilio_parser_get_int32(&parser, &sub->slot) &&
         grilio_parser_get_int32(&parser, &sub->appIndex) &&
         grilio_parser_get_int32(&parser, &sub->subType) &&
-        grilio_parser_get_int32(&parser, &sub->actStatus) &&
+        grilio_parser_get_int32(&parser, &status) &&
         grilio_parser_at_end(&parser)) {
         GBinderWriter writer;
 
+        sub->actStatus = status;
         gbinder_local_request_init_writer(out, &writer);
         gbinder_writer_append_int32(&writer, grilio_request_serial(in));
         gbinder_writer_append_buffer_object(&writer, sub, sizeof(*sub));
