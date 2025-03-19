@@ -27,29 +27,6 @@ Requires: libgrilio >= %{libgrilio_version}
 %description
 This package contains ofono plugin which implements binder transport for RIL
 
-%prep
-%setup -q -n %{name}-%{version}
-
-%build
-make %{_smp_mflags} LIBDIR=%{_libdir} KEEP_SYMBOLS=1 release pkgconfig
-
-%install
-rm -rf %{buildroot}
-make LIBDIR=%{_libdir} DESTDIR=%{buildroot} install-dev
-
-mkdir -p %{buildroot}/%{plugin_dir}
-%preun
-
-%files
-%dir %{plugin_dir}
-%defattr(-,root,root,-)
-%{plugin_dir}/rilbinderplugin.so
-%if %{license_support} == 0
-%license LICENSE
-%endif
-
-#############################################################################
-
 %package -n libgrilio-binder
 Summary: Binder based transport for libgrilio
 Requires(post): /sbin/ldconfig
@@ -70,22 +47,38 @@ Requires: pkgconfig(libgbinder) >= %{libgbinder_version}
 Requires: pkgconfig(libgbinder-radio) >= %{libgbinder_radio_version}
 Requires: libgrilio-binder = %{version}
 
+%description -n libgrilio-binder-devel
+This package contains the development library for libgrilio-binder.
+
+%prep
+%setup -q -n %{name}-%{version}
+
+%build
+make %{_smp_mflags} LIBDIR=%{_libdir} KEEP_SYMBOLS=1 release pkgconfig
+
+%install
+make LIBDIR=%{_libdir} DESTDIR=%{buildroot} install-dev
+
+mkdir -p %{buildroot}/%{plugin_dir}
+
 %post -n libgrilio-binder -p /sbin/ldconfig
 
 %postun -n libgrilio-binder -p /sbin/ldconfig
 
-%description -n libgrilio-binder-devel
-This package contains the development library for libgrilio-binder.
+%files
+%dir %{plugin_dir}
+%{plugin_dir}/rilbinderplugin.so
+%if %{license_support} == 0
+%license LICENSE
+%endif
 
 %files -n libgrilio-binder
-%defattr(-,root,root,-)
 %{_libdir}/libgrilio-binder.so.*
 %if %{license_support} == 0
 %license LICENSE
 %endif
 
 %files -n libgrilio-binder-devel
-%defattr(-,root,root,-)
 %{_libdir}/pkgconfig/libgrilio-binder.pc
 %{_libdir}/libgrilio-binder.so
 %{_includedir}/grilio-binder/*.h
